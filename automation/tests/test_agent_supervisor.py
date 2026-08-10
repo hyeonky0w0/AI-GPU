@@ -29,6 +29,16 @@ class AgentSupervisorTests(unittest.TestCase):
         self.assertEqual(len(run_dirs), 1)
         return completed, state, run_dirs[0]
 
+    def make_windows_layout(self, root: Path) -> Path:
+        agent_dir = root / "automation" / "agent"
+        tests_dir = root / "automation" / "tests"
+        agent_dir.mkdir(parents=True)
+        tests_dir.mkdir(parents=True)
+        for name in ["run_agent.ps1", "agent_prompt.md", "output_schema.json"]:
+            shutil.copy2(ROOT / "automation" / "agent" / name, agent_dir / name)
+        shutil.copy2(ROOT / "automation" / "tests" / "mock_codex.py", tests_dir / "mock_codex.py")
+        return agent_dir
+
     def test_mock_success(self):
         completed, state, run_dir = self.run_scenario("success")
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -55,6 +65,36 @@ class AgentSupervisorTests(unittest.TestCase):
         self.assertNotEqual(completed.returncode, 0)
         self.assertEqual(state["stop_reason"], "max_failures")
         self.assertTrue((run_dir / "error.json").exists())
+
+    def test_windows_default_agent_root_uses_script_location_not_cwd(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as unrelated:
+            fake_root = Path(directory) / "LG_Aimers"
+            agent_dir = self.make_windows_layout(fake_root)
+            command = [
+                "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(agent_dir / "run_agent.ps1"),
+                "-MaxHours", "0.05", "-MaxIterations", "1", "-MaxFailures", "1",
+                "-MockScenario", "success",
+            ]
+            completed = subprocess.run(command, cwd=unrelated, text=True, capture_output=True, timeout=30)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            state = json.loads((agent_dir / "agent_state.json").read_text(encoding="utf-8-sig"))
+            self.assertEqual(state["completed_iterations"], 1)
+            self.assertEqual(len(list((agent_dir / "runs").iterdir())), 1)
+
+    def test_windows_relative_agent_root_is_relative_to_script(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as unrelated:
+            fake_root = Path(directory) / "LG_Aimers"
+            agent_dir = self.make_windows_layout(fake_root)
+            command = [
+                "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(agent_dir / "run_agent.ps1"),
+                "-MaxHours", "0.05", "-MaxIterations", "1", "-MaxFailures", "1",
+                "-MockScenario", "success", "-AgentRoot", "relative-agent-state",
+            ]
+            completed = subprocess.run(command, cwd=unrelated, text=True, capture_output=True, timeout=30)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            expected = agent_dir / "relative-agent-state" / "agent_state.json"
+            self.assertTrue(expected.exists())
+            self.assertFalse((Path(unrelated) / "relative-agent-state").exists())
 
 
 if __name__ == "__main__":

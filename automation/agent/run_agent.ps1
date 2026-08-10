@@ -7,7 +7,7 @@ param(
     [string]$CodexCommand = "codex",
     [ValidateSet("", "success", "failed", "timeout", "malformed", "needs_human")]
     [string]$MockScenario = "",
-    [string]$AgentRoot = $PSScriptRoot
+    [string]$AgentRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -75,17 +75,52 @@ function ConvertTo-ProcessArgument([string]$Argument) {
     return '"' + $escaped + '"'
 }
 
-$agentRootPath = [IO.Path]::GetFullPath($AgentRoot)
-$automationRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$projectRoot = [IO.Path]::GetFullPath((Join-Path $automationRoot ".."))
+function Resolve-CheckedFullPath([string]$VariableName, [AllowNull()][string]$Value, [AllowNull()][string]$BasePath = $null) {
+    $shownValue = if ($null -eq $Value) { "<null>" } else { $Value }
+    $shownBase = if ($null -eq $BasePath) { "<null>" } else { $BasePath }
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        throw "경로 값이 null 또는 빈 문자열입니다. variable=$VariableName; value='$shownValue'; base='$shownBase'"
+    }
+    $candidate = $Value
+    if (-not [IO.Path]::IsPathRooted($candidate)) {
+        if ([string]::IsNullOrWhiteSpace($BasePath)) {
+            throw "상대 경로의 기준 경로가 비어 있습니다. variable=$VariableName; value='$shownValue'; base='$shownBase'"
+        }
+        $candidate = Join-Path $BasePath $candidate
+    }
+    try {
+        return [IO.Path]::GetFullPath($candidate)
+    } catch {
+        throw "경로 정규화에 실패했습니다. variable=$VariableName; value='$shownValue'; base='$shownBase'; candidate='$candidate'; error=$($_.Exception.Message)"
+    }
+}
+
+# Windows PowerShell 5.1에서는 param 기본값 평가 시 $PSScriptRoot가 비어 있을 수 있다.
+# param 처리 후의 실제 스크립트 위치만 신뢰하여 모든 루트를 계산한다.
+$scriptDirectory = Resolve-CheckedFullPath -VariableName 'PSScriptRoot' -Value $PSScriptRoot
+$automationRoot = Resolve-CheckedFullPath -VariableName 'automationRoot' -Value '..' -BasePath $scriptDirectory
+$projectRoot = Resolve-CheckedFullPath -VariableName 'projectRoot' -Value '..' -BasePath $automationRoot
+if ([string]::IsNullOrWhiteSpace($AgentRoot)) {
+    $AgentRoot = $scriptDirectory
+}
+$agentRootPath = Resolve-CheckedFullPath -VariableName 'AgentRoot' -Value $AgentRoot -BasePath $scriptDirectory
+if (-not (Test-Path -LiteralPath $projectRoot -PathType Container)) {
+    throw "계산된 저장소 루트가 존재하지 않습니다. variable=projectRoot; value='$projectRoot'; scriptDirectory='$scriptDirectory'"
+}
 $statePath = Join-Path $agentRootPath "agent_state.json"
 $runsRoot = Join-Path $agentRootPath "runs"
-$schemaPath = Join-Path $PSScriptRoot "output_schema.json"
-$templatePath = Join-Path $PSScriptRoot "agent_prompt.md"
+$schemaPath = Join-Path $scriptDirectory "output_schema.json"
+$templatePath = Join-Path $scriptDirectory "agent_prompt.md"
 New-Item -ItemType Directory -Force -Path $runsRoot | Out-Null
 
-if (-not $MockScenario -and -not (Get-Command $CodexCommand -ErrorAction SilentlyContinue)) {
-    throw "codex CLI를 찾을 수 없습니다: $CodexCommand"
+if (-not $MockScenario) {
+    $pathEnvironment = [Environment]::GetEnvironmentVariable("PATH")
+    if ([string]::IsNullOrWhiteSpace($pathEnvironment) -and -not [IO.Path]::IsPathRooted($CodexCommand)) {
+        throw "환경변수 PATH가 null 또는 빈 문자열이라 Codex CLI를 탐색할 수 없습니다. variable=PATH; value='$pathEnvironment'; CodexCommand='$CodexCommand'"
+    }
+    if (-not (Get-Command $CodexCommand -ErrorAction SilentlyContinue)) {
+        throw "codex CLI를 찾을 수 없습니다. variable=CodexCommand; value='$CodexCommand'; PATH='$pathEnvironment'"
+    }
 }
 
 $started = [DateTimeOffset]::Now
@@ -134,7 +169,8 @@ for ($number = 1; $number -le $MaxIterations; $number++) {
     $smokeReferencePath = Join-Path $iterationDir "smoke_result_reference.json"
     $errorPath = Join-Path $iterationDir "error.json"
     $protectedBefore = Get-ProtectedSnapshot $projectRoot $automationRoot
-    $registryRowsBefore = if (Test-Path -LiteralPath $registryPath) { @(Import-Csv -LiteralPath $registryPath) } else { @() }
+    $registryRowsBefore = @()
+    if (Test-Path -LiteralPath $registryPath) { $registryRowsBefore = @(Import-Csv -LiteralPath $registryPath) }
 
     if ($MockScenario) {
         $python = Join-Path $projectRoot ".venv\Scripts\python.exe"
@@ -213,7 +249,8 @@ for ($number = 1; $number -le $MaxIterations; $number++) {
 
     $protectedAfter = Get-ProtectedSnapshot $projectRoot $automationRoot
     $protectedChanges = @(Compare-ProtectedSnapshot $protectedBefore $protectedAfter)
-    $registryRowsAfter = if (Test-Path -LiteralPath $registryPath) { @(Import-Csv -LiteralPath $registryPath) } else { @() }
+    $registryRowsAfter = @()
+    if (Test-Path -LiteralPath $registryPath) { $registryRowsAfter = @(Import-Csv -LiteralPath $registryPath) }
     if ($registryRowsAfter.Count -lt $registryRowsBefore.Count) {
         $protectedChanges += $registryPath
     } else {
