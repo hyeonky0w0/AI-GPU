@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status", "hypothesis_id", "config_hash", "hypothesis", "rationale", "files_changed",
+    "tests_passed", "smoke_run_id", "smoke_metrics", "leakage_checks",
+    "failure_reason", "next_recommendation"
+  ],
+  "properties": {
+    "status": {"enum": ["success", "rejected", "failed", "needs_human"]},
+    "hypothesis_id": {"type": ["string", "null"]},
+    "config_hash": {"type": ["string", "null"]},
+    "hypothesis": {"type": ["string", "null"]},
+    "rationale": {"type": "string"},
+    "files_changed": {"type": "array", "items": {"type": "string"}},
+    "tests_passed": {"type": "boolean"},
+    "smoke_run_id": {"type": ["string", "null"]},
+    "smoke_metrics": {"type": "object"},
+    "leakage_checks": {
+      "type": "object",
+      "required": ["passed", "details"],
+      "properties": {
+        "passed": {"type": "boolean"},
+        "details": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    },
+    "failure_reason": {"type": ["string", "null"]},
+    "next_recommendation": {"type": "string"}
+  }
+}

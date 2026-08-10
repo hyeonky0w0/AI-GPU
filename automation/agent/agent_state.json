@@ -1,0 +1,11 @@
+{
+  "started_at": null,
+  "deadline": null,
+  "completed_iterations": 0,
+  "consecutive_failures": 0,
+  "attempted_hypotheses": [],
+  "successful_hypotheses": [],
+  "rejected_hypotheses": [],
+  "stop_reason": null,
+  "last_run_id": null
+}
