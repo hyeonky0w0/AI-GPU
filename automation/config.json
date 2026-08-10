@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "target": "control_success",
+  "id_column": "row_id",
+  "season_column": "season",
+  "data": {
+    "train_path": "train.csv",
+    "test_path": "test.csv",
+    "forbidden_path": "trackman_history.csv"
+  },
+  "rolling_splits": [
+    {"name": "fold_2022", "train_seasons": [2019, 2020, 2021], "validation_season": 2022},
+    {"name": "fold_2023", "train_seasons": [2019, 2020, 2021, 2022], "validation_season": 2023},
+    {"name": "fold_2024", "train_seasons": [2019, 2020, 2021, 2022, 2023], "validation_season": 2024}
+  ],
+  "recent_season_weights": {"2022": 0.20, "2023": 0.30, "2024": 0.50},
+  "limits": {
+    "max_experiments": 12,
+    "max_hours": 8,
+    "max_failures": 3,
+    "min_disk_free_gb": 20,
+    "memory_warning_available_gb": 2,
+    "memory_stop_available_gb": 1,
+    "max_model_minutes": 60,
+    "smoke_train_rows_per_fold": 2000,
+    "smoke_validation_rows_per_fold": 800,
+    "quick_sampling": "full_2024_holdout",
+    "seeds": [42, 2026, 3407]
+  },
+  "promotion": {
+    "min_quick_brier_improvement": 0.00005,
+    "min_champion_brier_improvement": 0.00010,
+    "max_single_season_regression": 0.00030,
+    "required_improved_seasons": 2,
+    "needs_confirmation_margin": 0.00005
+  },
+  "smoke": {
+    "candidate_id": "baseline_logistic",
+    "seed": 42,
+    "max_iter": 200
+  },
+  "research": {
+    "allow_trackman": false,
+    "allow_external_llm": false,
+    "allow_submission": false,
+    "allow_zip_creation": false,
+    "one_model_at_a_time": true
+  }
+}

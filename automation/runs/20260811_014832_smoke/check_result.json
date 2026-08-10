@@ -1,0 +1,136 @@
+{
+  "data_summary": {
+    "feature_count": 47,
+    "features": [
+      "season",
+      "game_month",
+      "game_dayofweek",
+      "inning",
+      "top_bottom",
+      "game_type",
+      "balls_before",
+      "strikes_before",
+      "outs_before",
+      "run_top_before",
+      "run_bot_before",
+      "run_total_before",
+      "score_diff_home",
+      "score_diff_pitcher_team",
+      "runner_on_1b",
+      "runner_on_2b",
+      "runner_on_3b",
+      "num_runners_on",
+      "base_state",
+      "home_win_expectancy",
+      "away_win_expectancy",
+      "li",
+      "pitcher_id",
+      "batter_id",
+      "pitcher_hand",
+      "batter_hand",
+      "pitcher_team_id",
+      "batter_team_id",
+      "asof_pitcher_n",
+      "asof_pitcher_success_rate",
+      "asof_pitcher_reverse_rate",
+      "asof_pitcher_middle_rate",
+      "asof_pitcher_ball_rate",
+      "asof_pitcher_strike_rate",
+      "asof_pitcher_prev1_game_success_rate",
+      "asof_pitcher_prev3_game_success_rate",
+      "asof_pitcher_prev5_game_success_rate",
+      "asof_pitcher_prev1_game_middle_rate",
+      "asof_pitcher_prev3_game_middle_rate",
+      "asof_pitcher_prev5_game_middle_rate",
+      "asof_batter_n",
+      "asof_batter_success_rate",
+      "asof_batter_middle_rate",
+      "asof_pitcher_pitchmix_n",
+      "asof_pitcher_fastball_rate",
+      "asof_pitcher_breaking_rate",
+      "asof_pitcher_offspeed_rate"
+    ],
+    "sample_duplicate_row_ids": 0,
+    "season_summary": {
+      "2019": {
+        "positives": 134060,
+        "rows": 237413,
+        "target_rate": 0.5646700054335694
+      },
+      "2020": {
+        "positives": 130028,
+        "rows": 244087,
+        "target_rate": 0.5327116970588356
+      },
+      "2021": {
+        "positives": 131639,
+        "rows": 247088,
+        "target_rate": 0.5327616072006734
+      },
+      "2022": {
+        "positives": 130893,
+        "rows": 247472,
+        "target_rate": 0.5289204435249241
+      },
+      "2023": {
+        "positives": 122752,
+        "rows": 245525,
+        "target_rate": 0.49995723449750534
+      },
+      "2024": {
+        "positives": 123231,
+        "rows": 253507,
+        "target_rate": 0.4861049201797189
+      }
+    },
+    "test_rows_sample": 5,
+    "train_rows": 1475092
+  },
+  "environment": {
+    "cpu_logical": 18,
+    "cpu_physical": 14,
+    "data": {
+      "test_path": "E:\\LG_Aimers\\test.csv",
+      "test_sha256": "478d10b20c00443f6fe8270ab7348de49d14395526130f0b2d915da496821a19",
+      "test_size": 1894,
+      "train_path": "E:\\LG_Aimers\\train.csv",
+      "train_sha256": "d2081186b458b49f60b082be480c273135833e15ba59a76d033af28bcf8763ff",
+      "train_size": 368527723
+    },
+    "disk_free_bytes": 987600785408,
+    "disk_total_bytes": 1024192409600,
+    "git": {
+      "branch": "agent/local-experiment",
+      "commit": "a945a674972ddbe5751e9863a8b5e8bcd8e33ac6",
+      "dirty": true
+    },
+    "gpu": "nvidia-smi unavailable; GPU not confirmed",
+    "libraries": {
+      "catboost": "1.2.10",
+      "lightgbm": "4.7.0",
+      "numpy": "2.5.2",
+      "pandas": "3.0.5",
+      "psutil": "7.2.2",
+      "scikit-learn": "1.9.0",
+      "xgboost": null
+    },
+    "memory_available_bytes": 4547706880,
+    "memory_total_bytes": 16898338816,
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python_executable": "E:\\LG_Aimers\\.venv\\Scripts\\python.exe",
+    "python_version": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]"
+  },
+  "errors": [],
+  "leakage": {
+    "passed": true,
+    "violations": [],
+    "warnings": [
+      "asof_*는 제공 문서상 허용되지만 원시 생성 코드는 저장소에 없어 독립 재감사는 미완료"
+    ]
+  },
+  "passed": true,
+  "warnings": [
+    "asof_*는 제공 문서상 허용되지만 원시 생성 코드는 저장소에 없어 독립 재감사는 미완료",
+    "XGBoost 미설치: 후보 자동 생략"
+  ]
+}

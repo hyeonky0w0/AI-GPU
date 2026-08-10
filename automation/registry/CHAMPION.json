@@ -1,0 +1,12 @@
+{
+  "status": "legacy_unverified",
+  "experiment_id": null,
+  "model": null,
+  "reason": "동일 rolling validation에서 재현 완료된 모델이 아직 없음",
+  "known_external_records": {
+    "catboost_leaderboard": 690.69,
+    "lightgbm_leaderboard_user_reported": 740.0,
+    "lightgbm_local_2024_documented_score": 621.51
+  },
+  "updated_at": "2026-08-11T00:00:00+09:00"
+}
