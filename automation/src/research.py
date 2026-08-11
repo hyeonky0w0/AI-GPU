@@ -27,7 +27,7 @@ from core import (
     is_resume_candidate, write_failure_artifacts,
 )
 from data_pipeline import (
-    apply_feature_policy, feature_columns, group_metrics_frame, load_smoke_rows, select_fold,
+    apply_feature_policy, apply_training_window_policy, feature_columns, group_metrics_frame, load_smoke_rows, select_fold,
 )
 from models import fit_predict, select_nonnegative_oof_weight
 
@@ -254,6 +254,7 @@ def candidate_config(candidate: dict[str, Any], config: dict[str, Any], data_che
             "source": "test.csv", "exclude": [config["id_column"]],
             "candidate": candidate["id"], "policy": candidate.get("feature_policy", "all"),
         },
+        "training_window_policy": candidate.get("training_window_policy", "all"),
         "model": model_type,
         "model_parameters": model_parameters,
         "seed": model_parameters["seed"],
@@ -299,8 +300,11 @@ def run_experiment(candidate: dict[str, Any], config: dict[str, Any], run_id: st
         past_oof_lightgbm: list[np.ndarray] = []
         past_oof_catboost: list[np.ndarray] = []
         for split in active_splits:
+            effective_split = apply_training_window_policy(
+                split, candidate.get("training_window_policy", "all")
+            )
             X_train, y_train, X_val, y_val = select_fold(
-                data, split, base_features, config["target"], stage == "smoke",
+                data, effective_split, base_features, config["target"], stage == "smoke",
                 config["limits"]["smoke_train_rows_per_fold"], config["limits"]["smoke_validation_rows_per_fold"],
             )
             feature_policy = candidate.get("feature_policy", "all")
@@ -339,7 +343,8 @@ def run_experiment(candidate: dict[str, Any], config: dict[str, Any], run_id: st
                 past_oof_catboost.append(components["catboost"].copy())
             metrics = calculate_metrics(y_val, prediction, float(y_train.mean()))
             fold_result = {
-                "fold": split["name"], "train_seasons": split["train_seasons"], "validation_season": split["validation_season"],
+                "fold": effective_split["name"], "train_seasons": effective_split["train_seasons"],
+                "validation_season": effective_split["validation_season"],
                 "train_rows": len(y_train), "validation_rows": len(y_val), "train_target_rate": float(y_train.mean()),
                 "runtime_seconds": time.monotonic() - fold_started, "metrics": metrics,
                 "feature_count": len(model_features), "features": model_features,

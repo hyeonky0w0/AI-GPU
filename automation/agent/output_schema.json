@@ -16,7 +16,19 @@
     "files_changed": {"type": "array", "items": {"type": "string"}},
     "tests_passed": {"type": "boolean"},
     "smoke_run_id": {"type": ["string", "null"]},
-    "smoke_metrics": {"type": "object"},
+    "smoke_metrics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "value", "split"],
+        "properties": {
+          "name": {"type": "string"},
+          "value": {"type": ["number", "null"]},
+          "split": {"type": ["string", "null"]}
+        }
+      }
+    },
     "leakage_checks": {
       "type": "object",
       "required": ["passed", "details"],
@@ -24,7 +36,7 @@
         "passed": {"type": "boolean"},
         "details": {"type": "array", "items": {"type": "string"}}
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "failure_reason": {"type": ["string", "null"]},
     "next_recommendation": {"type": "string"}

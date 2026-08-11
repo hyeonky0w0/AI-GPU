@@ -11,6 +11,20 @@ powershell -ExecutionPolicy Bypass -File automation/agent/run_agent.ps1 `
   -MaxHours 6 -MaxIterations 8 -MaxFailures 3
 ```
 
+PATH의 npm shim 대신 실행 파일을 직접 고정하려면 절대 경로만 허용하는 `-CodexPath`를
+사용한다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File automation/agent/run_agent.ps1 `
+  -MaxHours 6 -MaxIterations 1 -MaxFailures 1 `
+  -CodexPath C:\Users\home\AppData\Roaming\npm\codex.cmd
+```
+
+`.exe`는 절대 경로로 직접 시작하고 `.cmd`/`.bat`은 `%ComSpec% /d /s /c`를 통해
+실행한다. npm의 `codex.ps1`이 먼저 검색되면 같은 디렉터리의 `codex.cmd`를 선택한다.
+해석 결과와 시작 인자는 `launcher_diagnostics.jsonl`에 기록하되 민감정보 형태는
+마스킹한다.
+
 기본값은 6시간, 8 iteration, 연속 실패 3회다. `MaxHours`는 최소 실행 시간이 아닌
 상한이다. `needs_human`, `no_safe_hypothesis`, 실패 한도, iteration 한도 또는 시간
 한도에 도달하면 즉시 종료하며 가짜 대기를 하지 않는다. 각 iteration의 Codex 호출은
@@ -29,6 +43,11 @@ powershell -ExecutionPolicy Bypass -File automation/agent/run_agent.ps1 `
 못했다. CLI 버전에 따라 옵션명이 달라졌다면 실제 무인 실행 전에 `codex exec --help`로
 확인해야 한다. API/구독 사용량은 모델, prompt 크기, 최대 8회의 호출에 따라 달라지며
 사전에 정확히 산정할 수 없다. 6시간은 비용을 보장하는 값이 아니라 종료 상한이다.
+
+Codex CLI 0.147.0에는 `--ask-for-approval` 옵션이 없으므로 감독기는 해당 옵션을
+전달하지 않는다. unattended 정책은 지원되는 `-c approval_policy="never"` 설정으로
+지정하며 `--approve-for-me`, `danger-full-access`,
+`--dangerously-bypass-approvals-and-sandbox`도 사용하지 않는다.
 
 ## 안전 경계
 
@@ -53,6 +72,15 @@ Codex JSONL, structured summary, Git diff, 테스트 출력, smoke 참조와 오
 `summary.json`은 `status`, `hypothesis_id`, `config_hash`, `hypothesis`, `rationale`, `files_changed`,
 `tests_passed`, `smoke_run_id`, `smoke_metrics`, `leakage_checks`, `failure_reason`,
 `next_recommendation`을 반드시 포함한다.
+
+`smoke_metrics`는 동적 object가 아니라 다음 strict 배열 형식을 사용한다.
+
+```json
+[{"name": "brier_score", "value": 0.123, "split": "validation"}]
+```
+
+실제 Codex 프로세스를 시작하기 전에 schema 전체를 재귀 검사하여 모든 object의
+`additionalProperties=false`와 모든 property의 `required` 포함 여부를 검증한다.
 
 ## 테스트
 

@@ -13,7 +13,7 @@
 | 90 | 최근 시즌 sample weight | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
 | 88 | LightGBM 확률 보정 | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
 | 86 | CatBoost 확률 보정 | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
-| 84 | 최근 2개 시즌만 학습 | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
+| 84 | 최근 2개 시즌만 학습 | 예 | quick | passed | smoke_already_completed |
 | 82 | CatBoost와 LightGBM 단순 평균 | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
 | 80 | 원본 선수 ID 제거 | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
 | 78 | CatBoost 범주형 A/B/C/D 재검증 | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |

@@ -17,7 +17,8 @@ def result(status: str) -> dict:
         "files_changed": [],
         "tests_passed": status == "success",
         "smoke_run_id": "mock_smoke" if status == "success" else None,
-        "smoke_metrics": {"brier": 0.25} if status == "success" else {},
+        "smoke_metrics": ([{"name": "brier_score", "value": 0.25, "split": "smoke"}]
+                          if status == "success" else []),
         "leakage_checks": {"passed": True, "details": ["mock"]},
         "failure_reason": None if status == "success" else status,
         "next_recommendation": "none",

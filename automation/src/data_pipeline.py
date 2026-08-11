@@ -7,6 +7,22 @@ import numpy as np
 import pandas as pd
 
 
+def apply_training_window_policy(split: dict[str, Any], policy: str) -> dict[str, Any]:
+    """검증 시즌을 건드리지 않고 fold의 학습 시즌 범위만 제한한다."""
+    prepared = {**split, "train_seasons": list(split["train_seasons"])}
+    if policy == "recent_two_seasons":
+        past_seasons = sorted(
+            season for season in prepared["train_seasons"]
+            if season < prepared["validation_season"]
+        )
+        if len(past_seasons) < 2:
+            raise ValueError("최근 2개 시즌 정책에 과거 학습 시즌이 두 개 이상 필요합니다.")
+        prepared["train_seasons"] = past_seasons[-2:]
+    elif policy != "all":
+        raise ValueError(f"지원하지 않는 training window policy: {policy}")
+    return prepared
+
+
 def feature_columns(train_path: Path, test_path: Path, target: str, identifier: str) -> list[str]:
     train_columns = pd.read_csv(train_path, nrows=0, encoding="utf-8-sig").columns.tolist()
     test_columns = pd.read_csv(test_path, nrows=0, encoding="utf-8-sig").columns.tolist()

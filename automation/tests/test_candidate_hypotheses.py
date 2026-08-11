@@ -9,12 +9,28 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from data_pipeline import apply_feature_policy
+from data_pipeline import apply_feature_policy, apply_training_window_policy
 from models import fit_predict, select_nonnegative_oof_weight
 from research import candidate_stage_state
 
 
 class CandidateHypothesisTests(unittest.TestCase):
+    def test_recent_two_seasons_uses_only_latest_past_seasons(self):
+        split = {
+            "name": "fold_2024",
+            "train_seasons": [2019, 2020, 2021, 2022, 2023],
+            "validation_season": 2024,
+        }
+        prepared = apply_training_window_policy(split, "recent_two_seasons")
+        self.assertEqual(prepared["train_seasons"], [2022, 2023])
+        self.assertEqual(prepared["validation_season"], 2024)
+        self.assertEqual(split["train_seasons"], [2019, 2020, 2021, 2022, 2023])
+
+    def test_recent_two_seasons_rejects_insufficient_past_history(self):
+        split = {"name": "bad", "train_seasons": [2023], "validation_season": 2024}
+        with self.assertRaisesRegex(ValueError, "두 개 이상"):
+            apply_training_window_policy(split, "recent_two_seasons")
+
     def test_catboost_seed_ensemble_records_each_seed_and_ensemble(self):
         X_train = pd.DataFrame({
             "season": [2019] * 20,

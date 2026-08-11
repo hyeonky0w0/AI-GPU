@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -38,6 +39,17 @@ class AgentSupervisorTests(unittest.TestCase):
             shutil.copy2(ROOT / "automation" / "agent" / name, agent_dir / name)
         shutil.copy2(ROOT / "automation" / "tests" / "mock_codex.py", tests_dir / "mock_codex.py")
         return agent_dir
+
+    def launcher_command(self, agent_dir: Path, *extra: str) -> list[str]:
+        return [
+            "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(agent_dir / "run_agent.ps1"),
+            "-MaxHours", "0.05", "-MaxIterations", "1", "-MaxFailures", "1",
+            "-IterationTimeoutMinutes", "0.2", *extra,
+        ]
+
+    def read_launcher_log(self, agent_dir: Path) -> list[dict]:
+        path = agent_dir / "launcher_diagnostics.jsonl"
+        return [json.loads(line) for line in path.read_text(encoding="utf-8-sig").splitlines() if line]
 
     def test_mock_success(self):
         completed, state, run_dir = self.run_scenario("success")
@@ -95,6 +107,90 @@ class AgentSupervisorTests(unittest.TestCase):
             expected = agent_dir / "relative-agent-state" / "agent_state.json"
             self.assertTrue(expected.exists())
             self.assertFalse((Path(unrelated) / "relative-agent-state").exists())
+
+    def test_codex_cmd_with_spaces_uses_comspec(self):
+        with tempfile.TemporaryDirectory(prefix="LG Aimers ") as directory:
+            fake_root = Path(directory) / "LG Aimers"
+            agent_dir = self.make_windows_layout(fake_root)
+            shim = fake_root / "tools with spaces" / "codex.cmd"
+            shim.parent.mkdir(parents=True)
+            shim.write_text("@more >nul\n@exit /b 7\n", encoding="ascii")
+            completed = subprocess.run(
+                self.launcher_command(agent_dir, "-CodexPath", str(shim)),
+                cwd=Path(directory), text=True, capture_output=True, timeout=30,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            records = self.read_launcher_log(agent_dir)
+            resolved = next(item for item in records if item["event"] == "resolved_codex")
+            started = next(item for item in records if item["event"] == "process_start")
+            self.assertEqual(resolved["extension"], ".cmd")
+            self.assertEqual(Path(started["file_name"]), Path(os.environ["ComSpec"]))
+
+    def test_codex_exe_uses_absolute_filename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fake_root = Path(directory) / "LG_Aimers"
+            agent_dir = self.make_windows_layout(fake_root)
+            python_exe = ROOT / ".venv" / "Scripts" / "python.exe"
+            # Python을 Codex 대역으로 쓰며 첫 인자 'exec'에 해당하는 스크립트만 실행한다.
+            (fake_root / "exec").write_text("import sys\nsys.stdin.read()\nraise SystemExit(7)\n", encoding="utf-8")
+            completed = subprocess.run(
+                self.launcher_command(agent_dir, "-CodexPath", str(python_exe)),
+                cwd=directory, text=True, capture_output=True, timeout=30,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            started = next(item for item in self.read_launcher_log(agent_dir) if item["event"] == "process_start")
+            self.assertEqual(Path(started["file_name"]), python_exe.resolve())
+
+    def test_powershell_npm_shim_resolves_sibling_cmd(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fake_root = Path(directory) / "LG_Aimers"
+            agent_dir = self.make_windows_layout(fake_root)
+            shim_dir = Path(directory) / "npm shims"
+            shim_dir.mkdir()
+            (shim_dir / "codex.ps1").write_text("exit 99\n", encoding="utf-8")
+            (shim_dir / "codex.cmd").write_text("@more >nul\n@exit /b 7\n", encoding="ascii")
+            environment = os.environ.copy()
+            environment["PATH"] = str(shim_dir) + os.pathsep + environment.get("PATH", "")
+            completed = subprocess.run(
+                self.launcher_command(agent_dir), cwd=directory, env=environment,
+                text=True, capture_output=True, timeout=30,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            records = self.read_launcher_log(agent_dir)
+            first = next(item for item in records if item["event"] == "get_command")
+            resolved = next(item for item in records if item["event"] == "resolved_codex")
+            self.assertEqual(first["command_type"], "ExternalScript")
+            self.assertTrue(resolved["selected_path"].lower().endswith("codex.cmd"))
+
+    def test_missing_codex_reports_path_and_install_checks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fake_root = Path(directory) / "LG_Aimers"
+            agent_dir = self.make_windows_layout(fake_root)
+            completed = subprocess.run(
+                self.launcher_command(agent_dir, "-CodexCommand", "definitely_missing_codex_12345"),
+                cwd=directory, text=True, capture_output=True, timeout=30,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("PATH=", completed.stderr)
+            self.assertIn("Get-Command codex -All", completed.stderr)
+            self.assertFalse((agent_dir / "agent_state.json").exists())
+
+    def test_invalid_nested_object_schema_is_rejected_before_process_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fake_root = Path(directory) / "LG_Aimers"
+            agent_dir = self.make_windows_layout(fake_root)
+            schema_path = agent_dir / "output_schema.json"
+            schema = json.loads(schema_path.read_text(encoding="utf-8"))
+            del schema["properties"]["smoke_metrics"]["items"]["additionalProperties"]
+            schema_path.write_text(json.dumps(schema), encoding="utf-8")
+            completed = subprocess.run(
+                self.launcher_command(agent_dir, "-MockScenario", "success"),
+                cwd=directory, text=True, capture_output=True, timeout=30,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("additionalProperties=false", completed.stderr)
+            self.assertFalse((agent_dir / "agent_state.json").exists())
+            self.assertFalse((agent_dir / "launcher_diagnostics.jsonl").exists())
 
 
 if __name__ == "__main__":

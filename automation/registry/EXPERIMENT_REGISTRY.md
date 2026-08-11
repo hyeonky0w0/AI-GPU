@@ -21,3 +21,4 @@
 | exp_20260811_015015_drop_season_smoke | drop_season | catboost | completed | smoke | season 피처 제거 | 0.24994738058988086 | 0.00887307936536752 |
 | exp_20260811_015059_drop_drift_top_smoke | drop_drift_top | lightgbm | completed | smoke | 학습기간 PSI 상위 피처 제거 | 0.2517906176363212 | 0.0015640135390859733 |
 | exp_20260811_015134_oof_weighted_blend_smoke | oof_weighted_blend | oof_blend | completed | smoke | CatBoost와 LightGBM 과거 OOF 가중 앙상블 | 0.25035778699638667 | 0.007245677482103807 |
+| exp_20260811_025517_recent_two_seasons_smoke | recent_two_seasons | catboost | completed | smoke | 최근 2개 시즌만 학습 | 0.24978159122648924 | 0.00833049394482499 |

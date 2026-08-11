@@ -5,6 +5,7 @@ param(
     [ValidateRange(1, 100)][int]$MaxFailures = 3,
     [ValidateRange(0.001, 1440.0)][double]$IterationTimeoutMinutes = 60,
     [string]$CodexCommand = "codex",
+    [string]$CodexPath = "",
     [ValidateSet("", "success", "failed", "timeout", "malformed", "needs_human")]
     [string]$MockScenario = "",
     [string]$AgentRoot = ""
@@ -30,10 +31,57 @@ function Read-StructuredResult([string]$Path) {
     foreach ($field in $required) {
         if (-not ($value.PSObject.Properties.Name -contains $field)) { throw "structured output field missing: $field" }
     }
+    foreach ($field in $value.PSObject.Properties.Name) {
+        if ($required -notcontains $field) { throw "structured output field is not allowed: $field" }
+    }
     if ($value.status -notin @("success", "rejected", "failed", "needs_human")) {
         throw "invalid status: $($value.status)"
     }
+    $metrics = if ($null -eq $value.smoke_metrics) { @() } else { @($value.smoke_metrics) }
+    foreach ($metric in $metrics) {
+        $metricFields = @("name", "value", "split")
+        foreach ($field in $metricFields) {
+            if (-not ($metric.PSObject.Properties.Name -contains $field)) { throw "smoke metric field missing: $field" }
+        }
+        foreach ($field in $metric.PSObject.Properties.Name) {
+            if ($metricFields -notcontains $field) { throw "smoke metric field is not allowed: $field" }
+        }
+        if ($metric.name -isnot [string]) { throw "smoke metric name must be a string" }
+        if ($null -ne $metric.value -and $metric.value -isnot [ValueType]) { throw "smoke metric value must be a number or null" }
+        if ($null -ne $metric.split -and $metric.split -isnot [string]) { throw "smoke metric split must be a string or null" }
+    }
+    $leakageFields = @("passed", "details")
+    foreach ($field in $leakageFields) {
+        if (-not ($value.leakage_checks.PSObject.Properties.Name -contains $field)) { throw "leakage_checks field missing: $field" }
+    }
+    foreach ($field in $value.leakage_checks.PSObject.Properties.Name) {
+        if ($leakageFields -notcontains $field) { throw "leakage_checks field is not allowed: $field" }
+    }
     return $value
+}
+
+function Assert-StrictJsonSchema([object]$Node, [string]$Context = '$') {
+    if ($null -eq $Node) { throw "JSON schema node is null: context=$Context" }
+    $nodeFields = @($Node.PSObject.Properties.Name)
+    $types = if ($nodeFields -contains "type") { @($Node.type) } else { @() }
+    if ($types -contains "object") {
+        if ($nodeFields -notcontains "additionalProperties" -or $Node.additionalProperties -ne $false) {
+            throw "strict JSON schema requires additionalProperties=false: context=$Context"
+        }
+        if ($nodeFields -notcontains "properties") { throw "object schema properties missing: context=$Context" }
+        if ($nodeFields -notcontains "required") { throw "object schema required missing: context=$Context" }
+        $required = @($Node.required)
+        foreach ($property in $Node.properties.PSObject.Properties) {
+            if ($required -notcontains $property.Name) {
+                throw "all object properties must be required: context=$Context; property=$($property.Name)"
+            }
+            Assert-StrictJsonSchema -Node $property.Value -Context "$Context.properties.$($property.Name)"
+        }
+    }
+    if ($types -contains "array") {
+        if ($nodeFields -notcontains "items") { throw "array schema items missing: context=$Context" }
+        Assert-StrictJsonSchema -Node $Node.items -Context "$Context.items"
+    }
 }
 
 function Get-ProtectedSnapshot([string]$ProjectRoot, [string]$AutomationRoot) {
@@ -75,6 +123,72 @@ function ConvertTo-ProcessArgument([string]$Argument) {
     return '"' + $escaped + '"'
 }
 
+function Write-LauncherDiagnostic([string]$Path, [string]$Event, [hashtable]$Details) {
+    $record = [ordered]@{ timestamp = [DateTimeOffset]::Now.ToString("o"); event = $Event }
+    foreach ($key in $Details.Keys) { $record[$key] = $Details[$key] }
+    ($record | ConvertTo-Json -Compress -Depth 10) | Add-Content -LiteralPath $Path -Encoding utf8
+}
+
+function Get-SafeLoggedArguments([string[]]$Arguments) {
+    return @($Arguments | ForEach-Object {
+        if ($_ -match '(?i)(token|secret|password|api[_-]?key)') { "<redacted>" } else { $_ }
+    })
+}
+
+function Resolve-CodexLauncher(
+    [string]$RequestedCommand,
+    [string]$RequestedPath,
+    [string]$DiagnosticPath
+) {
+    $commandInfo = $null
+    $selectedPath = $null
+    if (-not [string]::IsNullOrWhiteSpace($RequestedPath)) {
+        if (-not [IO.Path]::IsPathRooted($RequestedPath)) {
+            throw "CodexPath는 절대 경로여야 합니다. variable=CodexPath; value='$RequestedPath'"
+        }
+        $selectedPath = Resolve-CheckedFullPath -VariableName 'CodexPath' -Value $RequestedPath
+        if (-not (Test-Path -LiteralPath $selectedPath -PathType Leaf)) {
+            throw "지정한 CodexPath 파일이 없습니다. variable=CodexPath; value='$selectedPath'"
+        }
+        $commandInfo = Get-Command -Name $selectedPath -ErrorAction Stop
+    } else {
+        try {
+            $commandInfo = Get-Command $RequestedCommand -ErrorAction Stop
+        } catch {
+            $pathValue = [Environment]::GetEnvironmentVariable("PATH")
+            throw "Codex CLI를 찾지 못했습니다. command='$RequestedCommand'; PATH='$pathValue'. 확인: Get-Command codex -All; where.exe codex; npm prefix -g"
+        }
+        $selectedPath = if ($commandInfo.Path) { $commandInfo.Path } else { $commandInfo.Source }
+        Write-LauncherDiagnostic $DiagnosticPath "get_command" @{
+            name = $commandInfo.Name; command_type = [string]$commandInfo.CommandType
+            source = [string]$commandInfo.Source; path = [string]$commandInfo.Path
+        }
+        # npm 설치에서는 PowerShell이 codex.ps1을 우선 반환한다. Process.Start로 ps1을
+        # 직접 실행하지 않고 같은 npm shim의 cmd 파일을 선택한다.
+        if ([IO.Path]::GetExtension($selectedPath) -ieq ".ps1") {
+            $siblingCmd = [IO.Path]::ChangeExtension($selectedPath, ".cmd")
+            if (Test-Path -LiteralPath $siblingCmd -PathType Leaf) {
+                $selectedPath = Resolve-CheckedFullPath -VariableName 'codex.cmd sibling' -Value $siblingCmd
+                $commandInfo = Get-Command -Name $selectedPath -ErrorAction Stop
+            } else {
+                throw "Codex가 PowerShell shim으로 해석됐지만 실행 가능한 codex.cmd가 없습니다. ps1='$selectedPath'; expected_cmd='$siblingCmd'; 확인: where.exe codex"
+            }
+        }
+    }
+
+    $selectedPath = Resolve-CheckedFullPath -VariableName 'resolved Codex path' -Value $selectedPath
+    $extension = [IO.Path]::GetExtension($selectedPath).ToLowerInvariant()
+    if ($extension -notin @(".exe", ".cmd", ".bat")) {
+        throw "지원하지 않는 Codex 실행 형식입니다. path='$selectedPath'; extension='$extension'; 허용=.exe,.cmd,.bat"
+    }
+    Write-LauncherDiagnostic $DiagnosticPath "resolved_codex" @{
+        name = $commandInfo.Name; command_type = [string]$commandInfo.CommandType
+        source = [string]$commandInfo.Source; path = [string]$commandInfo.Path
+        selected_path = $selectedPath; extension = $extension
+    }
+    return [pscustomobject]@{ Path = $selectedPath; Extension = $extension }
+}
+
 function Resolve-CheckedFullPath([string]$VariableName, [AllowNull()][string]$Value, [AllowNull()][string]$BasePath = $null) {
     $shownValue = if ($null -eq $Value) { "<null>" } else { $Value }
     $shownBase = if ($null -eq $BasePath) { "<null>" } else { $BasePath }
@@ -111,16 +225,19 @@ $statePath = Join-Path $agentRootPath "agent_state.json"
 $runsRoot = Join-Path $agentRootPath "runs"
 $schemaPath = Join-Path $scriptDirectory "output_schema.json"
 $templatePath = Join-Path $scriptDirectory "agent_prompt.md"
+if (-not (Test-Path -LiteralPath $schemaPath -PathType Leaf)) { throw "output schema 파일이 없습니다: $schemaPath" }
+$outputSchema = Get-Content -LiteralPath $schemaPath -Raw -Encoding utf8 | ConvertFrom-Json
+Assert-StrictJsonSchema -Node $outputSchema
 New-Item -ItemType Directory -Force -Path $runsRoot | Out-Null
+$launcherDiagnosticPath = Join-Path $agentRootPath "launcher_diagnostics.jsonl"
 
+$codexLauncher = $null
 if (-not $MockScenario) {
     $pathEnvironment = [Environment]::GetEnvironmentVariable("PATH")
     if ([string]::IsNullOrWhiteSpace($pathEnvironment) -and -not [IO.Path]::IsPathRooted($CodexCommand)) {
         throw "환경변수 PATH가 null 또는 빈 문자열이라 Codex CLI를 탐색할 수 없습니다. variable=PATH; value='$pathEnvironment'; CodexCommand='$CodexCommand'"
     }
-    if (-not (Get-Command $CodexCommand -ErrorAction SilentlyContinue)) {
-        throw "codex CLI를 찾을 수 없습니다. variable=CodexCommand; value='$CodexCommand'; PATH='$pathEnvironment'"
-    }
+    $codexLauncher = Resolve-CodexLauncher -RequestedCommand $CodexCommand -RequestedPath $CodexPath -DiagnosticPath $launcherDiagnosticPath
 }
 
 $started = [DateTimeOffset]::Now
@@ -179,20 +296,37 @@ for ($number = 1; $number -le $MaxIterations; $number++) {
         $processArgs = @($mockScript, "--scenario", $MockScenario, "--output", $summaryPath)
         $actualCommand = $python
     } else {
-        $actualCommand = $CodexCommand
+        $actualCommand = $codexLauncher.Path
         $processArgs = @("exec", "--sandbox", "workspace-write", "-c", 'approval_policy="never"',
             "-c", "sandbox_workspace_write.network_access=false",
             "--json", "--output-schema", $schemaPath, "--output-last-message", $summaryPath, "-")
     }
 
     $startInfo = [Diagnostics.ProcessStartInfo]::new()
-    $startInfo.FileName = $actualCommand
+    if (-not $MockScenario -and $codexLauncher.Extension -in @(".cmd", ".bat")) {
+        $comSpecValue = [Environment]::GetEnvironmentVariable("ComSpec")
+        if ([string]::IsNullOrWhiteSpace($comSpecValue)) {
+            throw "환경변수 ComSpec이 null 또는 빈 문자열입니다. variable=ComSpec; value='$comSpecValue'"
+        }
+        $comSpecPath = Resolve-CheckedFullPath -VariableName 'ComSpec' -Value $comSpecValue
+        $childArguments = (($processArgs | ForEach-Object { ConvertTo-ProcessArgument $_ }) -join " ")
+        $cmdLine = '"' + $actualCommand + '" ' + $childArguments
+        $startInfo.FileName = $comSpecPath
+        $startInfo.Arguments = '/d /s /c "' + $cmdLine + '"'
+    } else {
+        $startInfo.FileName = $actualCommand
+        $startInfo.Arguments = (($processArgs | ForEach-Object { ConvertTo-ProcessArgument $_ }) -join " ")
+    }
     $startInfo.WorkingDirectory = $projectRoot
     $startInfo.UseShellExecute = $false
     $startInfo.RedirectStandardInput = -not [bool]$MockScenario
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
-    $startInfo.Arguments = (($processArgs | ForEach-Object { ConvertTo-ProcessArgument $_ }) -join " ")
+    Write-LauncherDiagnostic $launcherDiagnosticPath "process_start" @{
+        file_name = $startInfo.FileName
+        arguments = @(Get-SafeLoggedArguments $processArgs)
+        working_directory = $startInfo.WorkingDirectory
+    }
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
     [void]$process.Start()

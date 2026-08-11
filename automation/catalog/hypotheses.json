@@ -7,7 +7,7 @@
   {"id":"drop_season","title":"season 피처 제거","model_type":"catboost","feature_policy":"drop_season","priority":72,"cost":"high","leakage_risk":"low","implemented":true,"requires":"catboost","reason":"동일 CatBoost 설정에서 season 의존성만 제거"},
   {"id":"drop_drift_top","title":"학습기간 PSI 상위 피처 제거","model_type":"lightgbm","feature_policy":"training_only_psi_top","priority":70,"cost":"medium","leakage_risk":"low","implemented":true,"requires":"lightgbm","reason":"각 fold의 학습 시즌 내부 드리프트만으로 상위 5개 피처 제거"},
   {"id":"recent_season_weight","title":"최근 시즌 sample weight","model_type":"catboost","priority":90,"cost":"high","leakage_risk":"low","implemented":false,"reason":"시즌별 타깃률 드리프트가 큼"},
-  {"id":"recent_two_seasons","title":"최근 2개 시즌만 학습","model_type":"catboost","priority":84,"cost":"medium","leakage_risk":"low","implemented":false,"reason":"오래된 시즌 분포 영향 제거"},
+  {"id":"recent_two_seasons","title":"최근 2개 시즌만 학습","model_type":"catboost","training_window_policy":"recent_two_seasons","priority":84,"cost":"medium","leakage_risk":"low","implemented":true,"requires":"catboost","reason":"오래된 시즌 분포 영향 제거"},
   {"id":"pitcher_expanding","title":"투수 expanding 성공률과 표본 수","model_type":"catboost","priority":65,"cost":"high","leakage_risk":"high","implemented":false,"reason":"시간 정렬 키가 없어 안전 구현 전 보류"},
   {"id":"batter_expanding","title":"타자 expanding 성공률과 표본 수","model_type":"catboost","priority":64,"cost":"high","leakage_risk":"high","implemented":false,"reason":"시간 정렬 키가 없어 안전 구현 전 보류"},
   {"id":"pitcher_pitch_smoothing","title":"투수×구종 smoothing 통계","priority":45,"cost":"high","leakage_risk":"high","implemented":false,"reason":"메인 데이터에 현재 구종 없음"},
