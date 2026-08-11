@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "challengers": [
+    {
+      "challenger_id": "catboost_seed_777_20260811",
+      "status": "promoted",
+      "baseline_champion": "recent_season_weight_20260811",
+      "reason": "seed 777이 세 rolling fold에서 seed 42를 모두 개선했으나 사전 제출 임계값에 근접하게 미달하여 예외적 확인 대상으로 승인됨",
+      "model": "catboost",
+      "changed_element": {"random_seed": {"from": 42, "to": 777}},
+      "fixed": {"feature_count": 47, "categorical_count": 3, "iterations": 184, "latest_season_weight": 2.0},
+      "rolling_recent_weighted_brier": 0.24870190918884047,
+      "rolling_improvement_vs_champion": 0.00004716325818829858,
+      "improved_validation_seasons": 3,
+      "leaderboard_score": 808.0,
+      "previous_champion_score": 806.0,
+      "leaderboard_improvement": 2.0,
+      "promoted_at": "2026-08-11T21:39:38+09:00",
+      "promotion_reason": "Seed 777이 Seed 42보다 리더보드에서 2점 개선되어 사용자 지시에 따라 Champion으로 승격",
+      "artifact_directory": "experiments/008_seed777_challenger/output",
+      "artifacts": {
+        "model_sha256": "7BF9A75AF42911912713A0523D025BB8848178F86B0E9B69D9913BB0FF4023BC",
+        "config_sha256": "34357FCD689802EAA6502A3DDEDC32895F77870444D9F6F725E19E75C8C8C5CD",
+        "zip_sha256": "4846271CBBB06B882FD7DD217955D3F68A4F5ECA7163285AA35286191AED3FD9",
+        "submission_csv_sha256": "D15D21C71FA7CBB64055292D34FFC094D91181AC71D53649C7578B7EA45FBD35"
+      },
+      "registered_at": "2026-08-11T16:30:00+09:00"
+    }
+  ]
+}

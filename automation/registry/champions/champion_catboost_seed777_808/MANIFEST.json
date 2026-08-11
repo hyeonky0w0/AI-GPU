@@ -1,0 +1,22 @@
+{
+  "champion_id": "catboost_seed_777_20260811",
+  "leaderboard_score": 808.0,
+  "leaderboard_score_source": "user_reported",
+  "previous_champion": {"id": "recent_season_weight_20260811", "seed": 42, "score": 806.0},
+  "registered_at": "2026-08-11T21:39:38+09:00",
+  "model": "catboost",
+  "seed": 777,
+  "feature_count": 47,
+  "categorical_count": 3,
+  "iterations": 184,
+  "sample_weight_policy": "latest_season_double",
+  "files": [
+    {"path": "model/catboost_seed_777.cbm", "sha256": "7BF9A75AF42911912713A0523D025BB8848178F86B0E9B69D9913BB0FF4023BC"},
+    {"path": "model/config.json", "sha256": "34357FCD689802EAA6502A3DDEDC32895F77870444D9F6F725E19E75C8C8C5CD"},
+    {"path": "script.py", "sha256": "2C25A0B158B143DFFEC68B8B969E7C914C2D1F36117F9554CAEBA70EFD29F29C"},
+    {"path": "requirements.txt", "sha256": "87E6BABBA557F4A0D1AC1F6E02C8E4CA6A781EAB4526F2B9A38F576A057FD116"},
+    {"path": "submit_catboost_seed777_808.zip", "sha256": "4846271CBBB06B882FD7DD217955D3F68A4F5ECA7163285AA35286191AED3FD9"},
+    {"path": "submission_catboost_seed777_20260811.csv", "sha256": "D15D21C71FA7CBB64055292D34FFC094D91181AC71D53649C7578B7EA45FBD35"},
+    {"path": "REPORT_final.json", "sha256": "6E50F59D6E445EAC19A9018185EE3D20A7EE5F0D3C72A43A6D6940D8E976D57F"}
+  ]
+}

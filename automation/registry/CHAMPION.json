@@ -1,12 +1,49 @@
 {
-  "status": "legacy_unverified",
-  "experiment_id": null,
-  "model": null,
-  "reason": "동일 rolling validation에서 재현 완료된 모델이 아직 없음",
-  "known_external_records": {
-    "catboost_leaderboard": 690.69,
-    "lightgbm_leaderboard_user_reported": 740.0,
-    "lightgbm_local_2024_documented_score": 621.51
+  "status": "active",
+  "experiment_id": "catboost_seed_777_20260811",
+  "model": "catboost",
+  "leaderboard_score": 808.0,
+  "leaderboard_score_source": "user_reported",
+  "leaderboard_improvement": 2.0,
+  "feature_count": 47,
+  "categorical_count": 3,
+  "seed": 777,
+  "iterations": 184,
+  "sample_weight_policy": "latest_season_double",
+  "artifact_directory": "automation/registry/champions/champion_catboost_seed777_808",
+  "artifacts": {
+    "model": {
+      "path": "automation/registry/champions/champion_catboost_seed777_808/model/catboost_seed_777.cbm",
+      "sha256": "7BF9A75AF42911912713A0523D025BB8848178F86B0E9B69D9913BB0FF4023BC"
+    },
+    "config": {
+      "path": "automation/registry/champions/champion_catboost_seed777_808/model/config.json",
+      "sha256": "34357FCD689802EAA6502A3DDEDC32895F77870444D9F6F725E19E75C8C8C5CD"
+    },
+    "script": {
+      "path": "automation/registry/champions/champion_catboost_seed777_808/script.py",
+      "sha256": "2C25A0B158B143DFFEC68B8B969E7C914C2D1F36117F9554CAEBA70EFD29F29C"
+    },
+    "requirements": {
+      "path": "automation/registry/champions/champion_catboost_seed777_808/requirements.txt",
+      "sha256": "87E6BABBA557F4A0D1AC1F6E02C8E4CA6A781EAB4526F2B9A38F576A057FD116"
+    },
+    "zip": {
+      "path": "automation/registry/champions/champion_catboost_seed777_808/submit_catboost_seed777_808.zip",
+      "sha256": "4846271CBBB06B882FD7DD217955D3F68A4F5ECA7163285AA35286191AED3FD9"
+    },
+    "submission_csv": {
+      "path": "automation/registry/champions/champion_catboost_seed777_808/submission_catboost_seed777_20260811.csv",
+      "sha256": "D15D21C71FA7CBB64055292D34FFC094D91181AC71D53649C7578B7EA45FBD35"
+    }
   },
-  "updated_at": "2026-08-11T00:00:00+09:00"
+  "previous_champion": {
+    "experiment_id": "recent_season_weight_20260811",
+    "seed": 42,
+    "leaderboard_score": 806.0,
+    "artifact_directory": "automation/registry/champions/champion_recent_season_weight_806",
+    "status": "preserved"
+  },
+  "validation_status": "rolling_improved_all_3_seasons; leaderboard_confirmed",
+  "updated_at": "2026-08-11T21:39:38+09:00"
 }
