@@ -22,3 +22,17 @@ models/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local competition data
+/train.csv
+/test.csv
+/trackman_history.csv
+/sample_submission.csv
+
+# Automation runtime artifacts
+/automation/agent/launcher_diagnostics.jsonl
+/automation/agent/runs/*
+!/automation/agent/runs/.gitkeep
+/automation/runs/
+
+/1차_CatBoost.ipynb
