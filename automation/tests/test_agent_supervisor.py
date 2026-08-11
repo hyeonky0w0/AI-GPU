@@ -21,7 +21,7 @@ class AgentSupervisorTests(unittest.TestCase):
         command = [
             "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCRIPT),
             "-MaxHours", "0.05", "-MaxIterations", "1", "-MaxFailures", str(failures),
-            "-IterationTimeoutMinutes", str(timeout_minutes), "-MockScenario", scenario,
+            "-IterationTimeoutMinutes", str(timeout_minutes), "-MinimumRemainingMinutes", "0.001", "-MockScenario", scenario,
             "-AgentRoot", str(agent_root),
         ]
         completed = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=30)
@@ -44,7 +44,7 @@ class AgentSupervisorTests(unittest.TestCase):
         return [
             "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(agent_dir / "run_agent.ps1"),
             "-MaxHours", "0.05", "-MaxIterations", "1", "-MaxFailures", "1",
-            "-IterationTimeoutMinutes", "0.2", *extra,
+            "-IterationTimeoutMinutes", "0.2", "-MinimumRemainingMinutes", "0.001", *extra,
         ]
 
     def read_launcher_log(self, agent_dir: Path) -> list[dict]:
@@ -56,27 +56,118 @@ class AgentSupervisorTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(state["successful_hypotheses"], ["mock_hypothesis"])
         self.assertEqual(state["stop_reason"], "max_iterations")
-        for name in ["prompt.txt", "codex_stdout.jsonl", "summary.json", "git_diff.patch", "test_output.txt", "smoke_result_reference.json"]:
+        for name in ["prompt.txt", "codex_stdout.jsonl", "summary.json", "git_diff.patch", "test_output.txt", "smoke_result_reference.json", "quick_result_reference.json"]:
             self.assertTrue((run_dir / name).exists(), name)
 
     def test_mock_process_failure(self):
         completed, state, run_dir = self.run_scenario("failed")
         self.assertNotEqual(completed.returncode, 0)
-        self.assertEqual(state["stop_reason"], "max_failures")
+        self.assertEqual(state["stop_reason"], "needs_human")
         self.assertTrue((run_dir / "error.json").exists())
 
     def test_mock_timeout(self):
         completed, state, run_dir = self.run_scenario("timeout", timeout_minutes=0.001)
         self.assertNotEqual(completed.returncode, 0)
-        self.assertEqual(state["stop_reason"], "max_failures")
+        self.assertEqual(state["stop_reason"], "needs_human")
         error = json.loads((run_dir / "error.json").read_text(encoding="utf-8-sig"))
         self.assertIn("iteration_timeout", error["message"])
 
     def test_malformed_json_is_failure(self):
         completed, state, run_dir = self.run_scenario("malformed")
         self.assertNotEqual(completed.returncode, 0)
-        self.assertEqual(state["stop_reason"], "max_failures")
+        self.assertEqual(state["stop_reason"], "needs_human")
         self.assertTrue((run_dir / "error.json").exists())
+
+    def test_multiple_iterations_continue_until_safety_cap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            agent_root = Path(directory) / "agent"
+            command = [
+                "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCRIPT),
+                "-MaxHours", "0.05", "-MaxIterations", "3", "-MaxFailures", "3",
+                "-IterationTimeoutMinutes", "1", "-MinimumRemainingMinutes", "0.001",
+                "-MockScenario", "unique_success", "-AgentRoot", str(agent_root),
+            ]
+            completed = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=30)
+            state = json.loads((agent_root / "agent_state.json").read_text(encoding="utf-8-sig"))
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(state["completed_iterations"], 3)
+            self.assertEqual(state["stop_reason"], "max_iterations")
+            self.assertEqual(len(state["successful_hypotheses"]), 3)
+            self.assertEqual(len(list((agent_root / "runs").iterdir())), 3)
+
+    def test_previous_successful_hypotheses_are_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            agent_root = Path(directory) / "agent"
+            agent_root.mkdir()
+            (agent_root / "agent_state.json").write_text(json.dumps({
+                "attempted_hypotheses": ["recent_two_seasons"],
+                "successful_hypotheses": ["recent_two_seasons"],
+                "rejected_hypotheses": [],
+            }), encoding="utf-8")
+            command = [
+                "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCRIPT),
+                "-MaxHours", "0.05", "-MaxIterations", "1", "-MaxFailures", "3",
+                "-IterationTimeoutMinutes", "1", "-MinimumRemainingMinutes", "0.001",
+                "-MockScenario", "unique_success", "-AgentRoot", str(agent_root),
+            ]
+            completed = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=30)
+            state = json.loads((agent_root / "agent_state.json").read_text(encoding="utf-8-sig"))
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("recent_two_seasons", state["successful_hypotheses"])
+            self.assertEqual(len(state["successful_hypotheses"]), 2)
+
+    def test_recoverable_failures_continue_until_iteration_cap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            agent_root = Path(directory) / "agent"
+            command = [
+                "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCRIPT),
+                "-MaxHours", "0.05", "-MaxIterations", "2", "-MaxFailures", "3",
+                "-IterationTimeoutMinutes", "1", "-MinimumRemainingMinutes", "0.001",
+                "-MockScenario", "failed", "-AgentRoot", str(agent_root),
+            ]
+            completed = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=30)
+            state = json.loads((agent_root / "agent_state.json").read_text(encoding="utf-8-sig"))
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(state["completed_iterations"], 2)
+            self.assertEqual(state["consecutive_failures"], 2)
+            self.assertEqual(state["stop_reason"], "max_iterations")
+
+    def test_rejected_hypotheses_continue_to_next_iteration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            agent_root = Path(directory) / "agent"
+            command = [
+                "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCRIPT),
+                "-MaxHours", "0.05", "-MaxIterations", "2", "-MaxFailures", "3",
+                "-IterationTimeoutMinutes", "1", "-MinimumRemainingMinutes", "0.001",
+                "-MockScenario", "unique_rejected", "-AgentRoot", str(agent_root),
+            ]
+            completed = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=30)
+            state = json.loads((agent_root / "agent_state.json").read_text(encoding="utf-8-sig"))
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(state["completed_iterations"], 2)
+            self.assertEqual(len(state["rejected_hypotheses"]), 2)
+            self.assertEqual(state["stop_reason"], "max_iterations")
+
+    def test_no_safe_hypothesis_is_normal_stop(self):
+        completed, state, _ = self.run_scenario("no_safe", failures=3)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(state["stop_reason"], "no_safe_hypothesis")
+
+    def test_insufficient_remaining_time_starts_no_iteration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            agent_root = Path(directory) / "agent"
+            command = [
+                "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCRIPT),
+                "-MaxHours", "0.001", "-MaxIterations", "8", "-MaxFailures", "3",
+                "-MinimumRemainingMinutes", "10", "-MockScenario", "success",
+                "-AgentRoot", str(agent_root),
+            ]
+            completed = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=30)
+            state = json.loads((agent_root / "agent_state.json").read_text(encoding="utf-8-sig"))
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(state["completed_iterations"], 0)
+            self.assertEqual(state["stop_reason"], "insufficient_time_remaining")
+            self.assertEqual(list((agent_root / "runs").iterdir()), [])
 
     def test_windows_default_agent_root_uses_script_location_not_cwd(self):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as unrelated:
@@ -85,7 +176,7 @@ class AgentSupervisorTests(unittest.TestCase):
             command = [
                 "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(agent_dir / "run_agent.ps1"),
                 "-MaxHours", "0.05", "-MaxIterations", "1", "-MaxFailures", "1",
-                "-MockScenario", "success",
+                "-MinimumRemainingMinutes", "0.001", "-MockScenario", "success",
             ]
             completed = subprocess.run(command, cwd=unrelated, text=True, capture_output=True, timeout=30)
             self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -100,7 +191,7 @@ class AgentSupervisorTests(unittest.TestCase):
             command = [
                 "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(agent_dir / "run_agent.ps1"),
                 "-MaxHours", "0.05", "-MaxIterations", "1", "-MaxFailures", "1",
-                "-MockScenario", "success", "-AgentRoot", "relative-agent-state",
+                "-MinimumRemainingMinutes", "0.001", "-MockScenario", "success", "-AgentRoot", "relative-agent-state",
             ]
             completed = subprocess.run(command, cwd=unrelated, text=True, capture_output=True, timeout=30)
             self.assertEqual(completed.returncode, 0, completed.stderr)

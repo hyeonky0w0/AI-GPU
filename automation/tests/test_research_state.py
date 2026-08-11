@@ -55,6 +55,16 @@ class ResearchStateTests(unittest.TestCase):
             self.assertTrue((run_dir / "run_manifest.json").exists())
             self.assertTrue((run_dir / "manifest.json").exists())
 
+    def test_research_cli_accepts_candidate_id(self):
+        from research import parse_args
+        original = sys.argv
+        try:
+            sys.argv = ["research.py", "--mode", "research", "--candidate-id", "recent_two_seasons"]
+            args = parse_args()
+        finally:
+            sys.argv = original
+        self.assertEqual(args.candidate_id, "recent_two_seasons")
+
 
 if __name__ == "__main__":
     unittest.main()

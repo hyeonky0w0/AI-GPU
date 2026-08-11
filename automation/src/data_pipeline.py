@@ -7,6 +7,20 @@ import numpy as np
 import pandas as pd
 
 
+def training_sample_weights(X_train: pd.DataFrame, policy: str) -> pd.Series | None:
+    """검증 정보 없이 학습 시즌만으로 사전 고정 sample weight를 만든다."""
+    if policy == "none":
+        return None
+    if policy != "latest_season_double":
+        raise ValueError(f"지원하지 않는 sample weight 정책: {policy}")
+    if "season" not in X_train or X_train["season"].isna().any():
+        raise ValueError("최근 시즌 가중치에는 결측 없는 season 컬럼이 필요합니다.")
+    latest_season = X_train["season"].max()
+    weights = pd.Series(1.0, index=X_train.index, dtype=float)
+    weights.loc[X_train["season"] == latest_season] = 2.0
+    return weights
+
+
 def apply_training_window_policy(split: dict[str, Any], policy: str) -> dict[str, Any]:
     """검증 시즌을 건드리지 않고 fold의 학습 시즌 범위만 제한한다."""
     prepared = {**split, "train_seasons": list(split["train_seasons"])}
@@ -163,6 +177,8 @@ def apply_feature_policy(
     psi_scores: dict[str, float] = {}
     if policy == "drop_season":
         dropped = ["season"] if "season" in X_train else []
+    elif policy == "drop_player_ids":
+        dropped = [column for column in ("pitcher_id", "batter_id") if column in X_train]
     elif policy == "training_only_psi_top":
         dropped, psi_scores = training_only_psi_drop_columns(X_train, top_n=5)
     elif policy != "all":

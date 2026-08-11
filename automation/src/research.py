@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gc
 import importlib.metadata
 import json
 import logging
@@ -28,6 +29,7 @@ from core import (
 )
 from data_pipeline import (
     apply_feature_policy, apply_training_window_policy, feature_columns, group_metrics_frame, load_smoke_rows, select_fold,
+    training_sample_weights,
 )
 from models import fit_predict, select_nonnegative_oof_weight
 
@@ -258,7 +260,7 @@ def candidate_config(candidate: dict[str, Any], config: dict[str, Any], data_che
         "model": model_type,
         "model_parameters": model_parameters,
         "seed": model_parameters["seed"],
-        "sample_weight": None,
+        "sample_weight": candidate.get("sample_weight_policy", "none"),
         "calibration": None,
         "ensemble": None,
         "stage": stage,
@@ -291,8 +293,12 @@ def run_experiment(candidate: dict[str, Any], config: dict[str, Any], run_id: st
                 train_path, base_features + [config["target"]], config["rolling_splits"],
                 config["limits"]["smoke_train_rows_per_fold"], config["limits"]["smoke_validation_rows_per_fold"],
             )
-        else:
+        elif stage == "quick":
             data = pd.read_csv(train_path, usecols=base_features + [config["target"]], low_memory=False, encoding="utf-8-sig")
+        else:
+            # rolling은 fold별 선택이 끝난 뒤 원본 DataFrame을 해제해 모델 학습 중
+            # 전체 데이터와 fold 복사본을 동시에 보유하지 않는다.
+            data = None
         active_splits = config["rolling_splits"] if stage != "quick" else [config["rolling_splits"][-1]]
         fold_results: list[dict[str, Any]] = []
         group_frames: list[pd.DataFrame] = []
@@ -300,13 +306,31 @@ def run_experiment(candidate: dict[str, Any], config: dict[str, Any], run_id: st
         past_oof_lightgbm: list[np.ndarray] = []
         past_oof_catboost: list[np.ndarray] = []
         for split in active_splits:
+            fold_data = data
+            if fold_data is None:
+                fold_data = pd.read_csv(
+                    train_path, usecols=base_features + [config["target"]],
+                    low_memory=False, encoding="utf-8-sig",
+                )
+            common_baseline_probability = None
+            if candidate.get("comparison_baseline") == "full_split_train_mean":
+                common_baseline_probability = float(
+                    fold_data.loc[fold_data["season"].isin(split["train_seasons"]), config["target"]].mean()
+                )
             effective_split = apply_training_window_policy(
                 split, candidate.get("training_window_policy", "all")
             )
             X_train, y_train, X_val, y_val = select_fold(
-                data, effective_split, base_features, config["target"], stage == "smoke",
+                fold_data, effective_split, base_features, config["target"], stage == "smoke",
                 config["limits"]["smoke_train_rows_per_fold"], config["limits"]["smoke_validation_rows_per_fold"],
             )
+            if stage == "quick":
+                data = None
+                fold_data = None
+                gc.collect()
+            elif stage == "rolling":
+                fold_data = None
+                gc.collect()
             feature_policy = candidate.get("feature_policy", "all")
             X_train, X_val, dropped_features, psi_scores = apply_feature_policy(X_train, X_val, feature_policy)
             model_features = X_train.columns.tolist()
@@ -314,6 +338,9 @@ def run_experiment(candidate: dict[str, Any], config: dict[str, Any], run_id: st
                 raise ValueError("후보 전처리 후 train/validation 피처 순서 불일치")
             model_config = dict(experiment_config["model_parameters"])
             model_config["y_val"] = y_val
+            sample_weight_policy = candidate.get("sample_weight_policy", "none")
+            sample_weight = training_sample_weights(X_train, sample_weight_policy)
+            model_config["sample_weight"] = None if sample_weight is None else sample_weight.to_numpy()
             fold_started = time.monotonic()
             prediction, model_details = fit_predict(candidate["model_type"], X_train, y_train, X_val, model_config)
             blend_details: dict[str, Any] | None = None
@@ -341,7 +368,8 @@ def run_experiment(candidate: dict[str, Any], config: dict[str, Any], run_id: st
                 past_oof_y.append(y_val.copy())
                 past_oof_lightgbm.append(components["lightgbm"].copy())
                 past_oof_catboost.append(components["catboost"].copy())
-            metrics = calculate_metrics(y_val, prediction, float(y_train.mean()))
+            baseline_probability = float(y_train.mean()) if common_baseline_probability is None else common_baseline_probability
+            metrics = calculate_metrics(y_val, prediction, baseline_probability)
             fold_result = {
                 "fold": effective_split["name"], "train_seasons": effective_split["train_seasons"],
                 "validation_season": effective_split["validation_season"],
@@ -349,6 +377,12 @@ def run_experiment(candidate: dict[str, Any], config: dict[str, Any], run_id: st
                 "runtime_seconds": time.monotonic() - fold_started, "metrics": metrics,
                 "feature_count": len(model_features), "features": model_features,
                 "dropped_features": dropped_features, "psi_scores": psi_scores,
+                "sample_weight_policy": sample_weight_policy,
+                "baseline_probability": baseline_probability,
+                "sample_weight_summary": None if sample_weight is None else {
+                    "min": float(sample_weight.min()), "max": float(sample_weight.max()),
+                    "mean": float(sample_weight.mean()),
+                },
             }
             if isinstance(model_details, dict) and model_details.get("seed_results"):
                 fold_result["seed_results"] = model_details["seed_results"]
@@ -590,7 +624,7 @@ def assess_and_store_champion(result: dict[str, Any], config: dict[str, Any], ru
     return decision
 
 
-def run_research_loop(config: dict[str, Any], run_id: str, run_dir: Path, logger: logging.Logger, max_experiments: int, max_hours: float) -> dict[str, Any]:
+def run_research_loop(config: dict[str, Any], run_id: str, run_dir: Path, logger: logging.Logger, max_experiments: int, max_hours: float, candidate_id: str | None = None) -> dict[str, Any]:
     budget = ResearchBudget(max_experiments, max_hours, time.monotonic())
     completed = failed = skipped = 0
     selected_experiments = 0
@@ -603,6 +637,10 @@ def run_research_loop(config: dict[str, Any], run_id: str, run_dir: Path, logger
             break
         refresh_reports()
         queue = load_json(QUEUE_PATH)
+        if candidate_id is not None:
+            queue = [item for item in queue if item["id"] == candidate_id]
+            if not queue:
+                raise ValueError(f"queue에 없는 candidate_id: {candidate_id}")
         selectable = [item for item in queue if item["id"] not in runtime_blocked]
         candidate = choose_candidate(selectable)
         if candidate is None:
@@ -635,9 +673,11 @@ def run_research_loop(config: dict[str, Any], run_id: str, run_dir: Path, logger
                 budget.completed += 1
                 continue
             completed += int(result.get("status") == "completed")
-            if stage == "rolling" and result.get("status") == "completed":
+            if stage == "rolling" and result.get("status") == "completed" and not candidate.get("comparison_only", False):
                 promotion = assess_and_store_champion(result, config, run_dir)
                 logger.info("champion 판정: %s (%s)", promotion["decision"], promotion["reason"])
+            elif stage == "rolling" and candidate.get("comparison_only", False):
+                logger.info("comparison_only 후보: champion 판정 생략")
         except Exception as error:
             failed += 1
             logger.exception("연구 실험 실패")
@@ -716,7 +756,7 @@ def main() -> int:
             manifest["skipped_experiments"] = int(result.get("status") == "skipped")
             manifest["result_files"].append(str(run_dir / "experiments"))
         elif args.mode == "research":
-            outcome = run_research_loop(config, run_id, run_dir, logger, manifest["max_experiments"], manifest["max_hours"])
+            outcome = run_research_loop(config, run_id, run_dir, logger, manifest["max_experiments"], manifest["max_hours"], args.candidate_id)
             manifest["completed_experiments"] = outcome["completed"]
             manifest["failed_experiments"] = outcome["failed"]
             manifest["skipped_experiments"] = outcome["skipped"]

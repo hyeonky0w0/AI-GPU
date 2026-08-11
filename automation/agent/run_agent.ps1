@@ -4,9 +4,10 @@ param(
     [ValidateRange(1, 100)][int]$MaxIterations = 8,
     [ValidateRange(1, 100)][int]$MaxFailures = 3,
     [ValidateRange(0.001, 1440.0)][double]$IterationTimeoutMinutes = 60,
+    [ValidateRange(0.001, 1440.0)][double]$MinimumRemainingMinutes = 10,
     [string]$CodexCommand = "codex",
     [string]$CodexPath = "",
-    [ValidateSet("", "success", "failed", "timeout", "malformed", "needs_human")]
+    [ValidateSet("", "success", "unique_success", "unique_rejected", "no_safe", "failed", "timeout", "malformed", "needs_human")]
     [string]$MockScenario = "",
     [string]$AgentRoot = ""
 )
@@ -26,7 +27,7 @@ function Read-StructuredResult([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "structured output missing: $Path" }
     $value = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json
     $required = @("status", "hypothesis_id", "config_hash", "hypothesis", "rationale", "files_changed",
-        "tests_passed", "smoke_run_id", "smoke_metrics", "leakage_checks",
+        "tests_passed", "smoke_run_id", "smoke_metrics", "quick_run_id", "quick_metrics", "leakage_checks",
         "failure_reason", "next_recommendation")
     foreach ($field in $required) {
         if (-not ($value.PSObject.Properties.Name -contains $field)) { throw "structured output field missing: $field" }
@@ -37,18 +38,20 @@ function Read-StructuredResult([string]$Path) {
     if ($value.status -notin @("success", "rejected", "failed", "needs_human")) {
         throw "invalid status: $($value.status)"
     }
-    $metrics = if ($null -eq $value.smoke_metrics) { @() } else { @($value.smoke_metrics) }
-    foreach ($metric in $metrics) {
+    foreach ($metricSetName in @("smoke_metrics", "quick_metrics")) {
+      $metrics = if ($null -eq $value.$metricSetName) { @() } else { @($value.$metricSetName) }
+      foreach ($metric in $metrics) {
         $metricFields = @("name", "value", "split")
         foreach ($field in $metricFields) {
-            if (-not ($metric.PSObject.Properties.Name -contains $field)) { throw "smoke metric field missing: $field" }
+            if (-not ($metric.PSObject.Properties.Name -contains $field)) { throw "$metricSetName field missing: $field" }
         }
         foreach ($field in $metric.PSObject.Properties.Name) {
-            if ($metricFields -notcontains $field) { throw "smoke metric field is not allowed: $field" }
+            if ($metricFields -notcontains $field) { throw "$metricSetName field is not allowed: $field" }
         }
-        if ($metric.name -isnot [string]) { throw "smoke metric name must be a string" }
-        if ($null -ne $metric.value -and $metric.value -isnot [ValueType]) { throw "smoke metric value must be a number or null" }
-        if ($null -ne $metric.split -and $metric.split -isnot [string]) { throw "smoke metric split must be a string or null" }
+        if ($metric.name -isnot [string]) { throw "$metricSetName name must be a string" }
+        if ($null -ne $metric.value -and $metric.value -isnot [ValueType]) { throw "$metricSetName value must be a number or null" }
+        if ($null -ne $metric.split -and $metric.split -isnot [string]) { throw "$metricSetName split must be a string or null" }
+      }
     }
     $leakageFields = @("passed", "details")
     foreach ($field in $leakageFields) {
@@ -242,18 +245,26 @@ if (-not $MockScenario) {
 
 $started = [DateTimeOffset]::Now
 $deadline = $started.AddHours($MaxHours)
+$previousState = $null
+if (Test-Path -LiteralPath $statePath -PathType Leaf) {
+    try { $previousState = Get-Content -LiteralPath $statePath -Raw -Encoding utf8 | ConvertFrom-Json } catch { $previousState = $null }
+}
+$priorAttempted = if ($previousState) { [object[]]@($previousState.attempted_hypotheses) } else { [object[]]@() }
+$priorSuccessful = if ($previousState) { [object[]]@($previousState.successful_hypotheses) } else { [object[]]@() }
+$priorRejected = if ($previousState) { [object[]]@($previousState.rejected_hypotheses) } else { [object[]]@() }
 $state = [ordered]@{
     started_at = $started.ToString("o")
     deadline = $deadline.ToString("o")
     completed_iterations = 0
     consecutive_failures = 0
-    attempted_hypotheses = @()
-    successful_hypotheses = @()
-    rejected_hypotheses = @()
+    attempted_hypotheses = $priorAttempted
+    successful_hypotheses = $priorSuccessful
+    rejected_hypotheses = $priorRejected
     stop_reason = $null
     last_run_id = $null
 }
 Write-JsonAtomic $statePath $state
+$sessionCompletedIterations = 0
 
 $usedConfigHashes = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $registryPath = Join-Path $automationRoot "registry\EXPERIMENT_REGISTRY.csv"
@@ -263,8 +274,9 @@ if (Test-Path -LiteralPath $registryPath) {
 }
 
 for ($number = 1; $number -le $MaxIterations; $number++) {
-    if ([DateTimeOffset]::Now -ge $deadline) { $state.stop_reason = "max_hours"; break }
-    if ($state.consecutive_failures -ge $MaxFailures) { $state.stop_reason = "max_failures"; break }
+    $remaining = $deadline - [DateTimeOffset]::Now
+    if ($remaining.TotalMinutes -lt $MinimumRemainingMinutes) { $state.stop_reason = "insufficient_time_remaining"; break }
+    if ($state.consecutive_failures -ge $MaxFailures) { $state.stop_reason = "needs_human"; break }
 
     $iterationId = "{0}_{1:d3}" -f ([DateTimeOffset]::Now.ToString("yyyyMMdd_HHmmss")), $number
     $iterationDir = Join-Path $runsRoot $iterationId
@@ -284,6 +296,7 @@ for ($number = 1; $number -le $MaxIterations; $number++) {
     $testOutputPath = Join-Path $iterationDir "test_output.txt"
     $diffPath = Join-Path $iterationDir "git_diff.patch"
     $smokeReferencePath = Join-Path $iterationDir "smoke_result_reference.json"
+    $quickReferencePath = Join-Path $iterationDir "quick_result_reference.json"
     $errorPath = Join-Path $iterationDir "error.json"
     $protectedBefore = Get-ProtectedSnapshot $projectRoot $automationRoot
     $registryRowsBefore = @()
@@ -333,7 +346,9 @@ for ($number = 1; $number -le $MaxIterations; $number++) {
     if (-not $MockScenario) { $process.StandardInput.Write($prompt); $process.StandardInput.Close() }
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
-    $timeoutMs = [Math]::Max(1, [int]($IterationTimeoutMinutes * 60 * 1000))
+    $remainingTimeoutMinutes = [Math]::Max(0.001, ($deadline - [DateTimeOffset]::Now).TotalMinutes)
+    $effectiveTimeoutMinutes = [Math]::Min($IterationTimeoutMinutes, $remainingTimeoutMinutes)
+    $timeoutMs = [Math]::Max(1, [int]($effectiveTimeoutMinutes * 60 * 1000))
     $finished = $process.WaitForExit($timeoutMs)
     if (-not $finished) {
         $process.Kill()
@@ -354,17 +369,24 @@ for ($number = 1; $number -le $MaxIterations; $number++) {
         if ($result.config_hash -and $usedConfigHashes.Contains([string]$result.config_hash)) {
             throw "duplicate_config_hash: $($result.config_hash)"
         }
+        if (-not $MockScenario -and $result.hypothesis_id) {
+            $registryRowsCurrent = if (Test-Path -LiteralPath $registryPath) { @(Import-Csv -LiteralPath $registryPath) } else { @() }
+            $newRegistryRows = @($registryRowsCurrent | Select-Object -Skip $registryRowsBefore.Count)
+            if (-not ($newRegistryRows | Where-Object { $_.hypothesis_id -eq $result.hypothesis_id })) {
+                throw "iteration_result_not_recorded_in_registry: $($result.hypothesis_id)"
+            }
+        }
         if ($result.hypothesis_id -and $state.attempted_hypotheses -notcontains $result.hypothesis_id) {
-            $state.attempted_hypotheses += $result.hypothesis_id
+            $state.attempted_hypotheses = [object[]]@($state.attempted_hypotheses) + @($result.hypothesis_id)
         }
         if ($result.status -eq "success") {
             if (-not $result.tests_passed) { throw "success_without_passing_tests" }
             if (-not $result.config_hash) { throw "success_without_config_hash" }
             [void]$usedConfigHashes.Add([string]$result.config_hash)
-            $state.successful_hypotheses += $result.hypothesis_id
+            if ($state.successful_hypotheses -notcontains $result.hypothesis_id) { $state.successful_hypotheses = [object[]]@($state.successful_hypotheses) + @($result.hypothesis_id) }
             $state.consecutive_failures = 0
         } elseif ($result.status -eq "rejected") {
-            $state.rejected_hypotheses += $result.hypothesis_id
+            if ($result.hypothesis_id -and $state.rejected_hypotheses -notcontains $result.hypothesis_id) { $state.rejected_hypotheses = [object[]]@($state.rejected_hypotheses) + @($result.hypothesis_id) }
             $state.consecutive_failures = 0
         } else {
             $iterationFailed = $true
@@ -373,8 +395,11 @@ for ($number = 1; $number -le $MaxIterations; $number++) {
         if ($result.smoke_run_id) {
             Write-JsonAtomic $smokeReferencePath ([ordered]@{ smoke_run_id = $result.smoke_run_id; smoke_metrics = $result.smoke_metrics })
         }
-        if ($result.status -eq "needs_human") { $state.stop_reason = if ($result.failure_reason -eq "no_safe_hypothesis") { "no_safe_hypothesis" } else { "needs_human" } }
-        if ($result.status -eq "failed" -and -not $result.tests_passed) { $state.stop_reason = "needs_human" }
+        if ($result.quick_run_id) {
+            Write-JsonAtomic $quickReferencePath ([ordered]@{ quick_run_id = $result.quick_run_id; quick_metrics = $result.quick_metrics })
+        }
+        if ($result.failure_reason -eq "no_safe_hypothesis") { $state.stop_reason = "no_safe_hypothesis" }
+        elseif ($result.status -eq "needs_human") { $state.stop_reason = "needs_human" }
     } catch {
         $iterationFailed = $true
         $state.consecutive_failures++
@@ -410,20 +435,21 @@ for ($number = 1; $number -le $MaxIterations; $number++) {
     $gitDiff = (& git -C $projectRoot diff -- automation | Out-String)
     $gitDiff | Set-Content -LiteralPath $diffPath -Encoding utf8
     $state.completed_iterations++
+    $sessionCompletedIterations++
     Write-JsonAtomic $statePath $state
 
     if ($state.stop_reason) { break }
-    if ($iterationFailed -and $state.consecutive_failures -ge $MaxFailures) { $state.stop_reason = "max_failures"; break }
+    if ($iterationFailed -and $state.consecutive_failures -ge $MaxFailures) { $state.stop_reason = "needs_human"; break }
 }
 
 if (-not $state.stop_reason) {
     if ([DateTimeOffset]::Now -ge $deadline) { $state.stop_reason = "max_hours" }
-    elseif ($state.completed_iterations -ge $MaxIterations) { $state.stop_reason = "max_iterations" }
-    elseif ($state.consecutive_failures -ge $MaxFailures) { $state.stop_reason = "max_failures" }
+    elseif ($sessionCompletedIterations -ge $MaxIterations) { $state.stop_reason = "max_iterations" }
+    elseif ($state.consecutive_failures -ge $MaxFailures) { $state.stop_reason = "needs_human" }
 }
 Write-JsonAtomic $statePath $state
 Write-Host "completed_iterations=$($state.completed_iterations)"
 Write-Host "consecutive_failures=$($state.consecutive_failures)"
 Write-Host "stop_reason=$($state.stop_reason)"
-if ($state.stop_reason -in @("needs_human", "max_failures")) { exit 2 }
+if ($state.stop_reason -eq "needs_human") { exit 2 }
 exit 0

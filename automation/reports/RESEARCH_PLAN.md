@@ -8,19 +8,19 @@
 |---:|---|---|---|---|---|
 | 100 | LightGBM 기준선 rolling validation | 예 | - | completed | rolling_already_completed |
 | 95 | CatBoost 기준선 rolling validation | 예 | - | completed | rolling_already_completed |
-| 94 | LightGBM seed ensemble | 예 | quick | passed | smoke_already_completed |
-| 93 | CatBoost seed ensemble | 예 | quick | passed | smoke_already_completed |
-| 90 | 최근 시즌 sample weight | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
+| 94 | LightGBM seed ensemble | 예 | rolling | passed | quick_metric_gate_passed |
+| 93 | CatBoost seed ensemble | 예 | rolling | passed | quick_metric_gate_passed |
+| 90 | 최근 시즌 sample weight | 예 | rolling | passed | quick_metric_gate_passed |
 | 88 | LightGBM 확률 보정 | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
 | 86 | CatBoost 확률 보정 | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
-| 84 | 최근 2개 시즌만 학습 | 예 | quick | passed | smoke_already_completed |
+| 84 | 최근 2개 시즌만 학습 | 예 | rolling | passed | quick_metric_gate_passed |
 | 82 | CatBoost와 LightGBM 단순 평균 | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
-| 80 | 원본 선수 ID 제거 | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
+| 80 | 원본 선수 ID 제거 | 예 | rolling | passed | quick_metric_gate_passed |
 | 78 | CatBoost 범주형 A/B/C/D 재검증 | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
 | 76 | 확률 clipping 및 global prior shrinkage | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
-| 72 | season 피처 제거 | 예 | quick | passed | smoke_already_completed |
-| 70 | 학습기간 PSI 상위 피처 제거 | 예 | quick | passed | smoke_already_completed |
-| 69 | CatBoost와 LightGBM 과거 OOF 가중 앙상블 | 예 | quick | passed | smoke_already_completed |
+| 72 | season 피처 제거 | 예 | rolling | passed | quick_metric_gate_passed |
+| 70 | 학습기간 PSI 상위 피처 제거 | 예 | rolling | passed | quick_metric_gate_passed |
+| 69 | CatBoost와 LightGBM 과거 OOF 가중 앙상블 | 예 | rolling | passed | quick_metric_gate_passed |
 | 65 | 투수 expanding 성공률과 표본 수 | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
 | 64 | 타자 expanding 성공률과 표본 수 | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
 | 62 | 앙상블 후 calibration | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
@@ -31,5 +31,8 @@
 | 44 | 타자×구종 smoothing 통계 | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
 | 40 | 최근 N개 투구 rolling 통계 | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
 | 39 | 시간 감쇠 EWM 통계 | 아니오 | - | blocked | 안전 실행 템플릿 미구현 |
-| 35 | 학습 구간 평균 상수 기준선 | 예 | benchmark | pending | benchmark_not_started |
-| 34 | 직전 시즌 평균 확률 기준선 | 예 | benchmark | pending | benchmark_not_started |
+| 35 | 학습 구간 평균 상수 기준선 | 예 | - | completed | benchmark_already_completed |
+| 34 | 직전 시즌 평균 확률 기준선 | 예 | - | completed | benchmark_already_completed |
+| 33 | LightGBM 동일조건 최근 시즌 2배 가중 | 예 | rolling | passed | quick_metric_gate_passed |
+| 32 | LightGBM 동일조건 최근 2개 시즌 학습 | 예 | rolling | passed | quick_metric_gate_passed |
+| 31 | LightGBM 동일조건 선수 ID 제거 | 예 | rolling | passed | quick_metric_gate_passed |

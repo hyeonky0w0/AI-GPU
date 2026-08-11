@@ -1,7 +1,7 @@
 # Codex 연구 감독 루프
 
 기존 `automation/run_research.ps1` 위에서 Codex가 안전한 가설 하나씩 구현하고 단위
-테스트와 축소 smoke까지만 수행하도록 감독한다. 이 기능은 성능 향상이나 리더보드
+테스트, 축소 smoke, 조건부 quick까지 수행하도록 감독한다. 이 기능은 성능 향상이나 리더보드
 점수를 보장하지 않으며 champion 승격은 사람이 검토해 수행한다.
 
 ## 실행
@@ -26,9 +26,12 @@ powershell -ExecutionPolicy Bypass -File automation/agent/run_agent.ps1 `
 마스킹한다.
 
 기본값은 6시간, 8 iteration, 연속 실패 3회다. `MaxHours`는 최소 실행 시간이 아닌
-상한이다. `needs_human`, `no_safe_hypothesis`, 실패 한도, iteration 한도 또는 시간
-한도에 도달하면 즉시 종료하며 가짜 대기를 하지 않는다. 각 iteration의 Codex 호출은
+상한이다. `needs_human`, `no_safe_hypothesis`, iteration 한도 또는 시간
+한도에 도달하면 즉시 종료하며 가짜 대기를 하지 않는다. 연속 실패 한도는
+`needs_human`으로 전환된다. 각 iteration의 Codex 호출은
 정확히 한 번이고, 같은 호출 안에서만 최대 두 차례 수정하도록 prompt가 제한한다.
+기본적으로 남은 시간이 10분 미만이면 새 iteration을 시작하지 않고
+`insufficient_time_remaining`으로 정상 종료한다. `MaxIterations`는 시간과 별도의 안전 상한이다.
 
 실행 전 `codex` CLI가 PATH에 있고 로그인·과금 정책이 준비됐는지 사람이 확인해야
 한다. 감독기는 다음 unattended 옵션으로 호출한다.
@@ -53,7 +56,7 @@ Codex CLI 0.147.0에는 `--ask-for-approval` 옵션이 없으므로 감독기는
 
 - Codex는 `automation/`과 관련 테스트만 수정한다.
 - 원본 CSV, 기존 registry 행/결과, `CHAMPION.json`은 수정하지 않는다.
-- quick, rolling, research, 제출 생성은 실행하지 않는다.
+- 선택한 가설의 smoke와 quick만 실행한다. rolling/full, 일반 research loop, 제출 생성은 실행하지 않는다.
 - 네트워크, 패키지 설치, Git commit/push/reset/checkout/clean을 금지한다.
 - validation target 또는 test 분포를 피처/가중치 선택에 쓰면 기각한다.
 - 동일 config hash와 이미 시도한 가설은 다시 실행하지 않는다.
@@ -70,7 +73,7 @@ OS 수준 차단은 별개이므로, 완전한 무인 실행 전 `codex exec --h
 Codex JSONL, structured summary, Git diff, 테스트 출력, smoke 참조와 오류가 저장된다.
 
 `summary.json`은 `status`, `hypothesis_id`, `config_hash`, `hypothesis`, `rationale`, `files_changed`,
-`tests_passed`, `smoke_run_id`, `smoke_metrics`, `leakage_checks`, `failure_reason`,
+`tests_passed`, `smoke_run_id`, `smoke_metrics`, `quick_run_id`, `quick_metrics`, `leakage_checks`, `failure_reason`,
 `next_recommendation`을 반드시 포함한다.
 
 `smoke_metrics`는 동적 object가 아니라 다음 strict 배열 형식을 사용한다.

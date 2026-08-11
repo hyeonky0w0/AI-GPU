@@ -9,12 +9,29 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from data_pipeline import apply_feature_policy, apply_training_window_policy
+from data_pipeline import apply_feature_policy, apply_training_window_policy, training_sample_weights
 from models import fit_predict, select_nonnegative_oof_weight
 from research import candidate_stage_state
 
 
 class CandidateHypothesisTests(unittest.TestCase):
+    def test_recent_season_weight_uses_training_seasons_only(self):
+        train = pd.DataFrame({"season": [2021, 2022, 2022], "x": [1, 2, 3]})
+        weights = training_sample_weights(train, "latest_season_double")
+        self.assertEqual(weights.tolist(), [1.0, 2.0, 2.0])
+
+    def test_recent_season_weight_rejects_missing_season(self):
+        with self.assertRaisesRegex(ValueError, "season"):
+            training_sample_weights(pd.DataFrame({"x": [1]}), "latest_season_double")
+
+    def test_drop_player_ids_removes_only_player_ids(self):
+        train = pd.DataFrame({"season": [2022], "pitcher_id": [1], "batter_id": [2], "pitcher_team_id": [3]})
+        validation = train.copy()
+        prepared_train, prepared_validation, dropped, _ = apply_feature_policy(train, validation, "drop_player_ids")
+        self.assertEqual(dropped, ["pitcher_id", "batter_id"])
+        self.assertEqual(prepared_train.columns.tolist(), ["season", "pitcher_team_id"])
+        self.assertEqual(prepared_train.columns.tolist(), prepared_validation.columns.tolist())
+
     def test_recent_two_seasons_uses_only_latest_past_seasons(self):
         split = {
             "name": "fold_2024",
@@ -50,6 +67,7 @@ class CandidateHypothesisTests(unittest.TestCase):
             "y_val": y_val,
         })
         self.assertEqual(details["seed_predictions"].shape, (6, 2))
+        self.assertNotIn("models", details)
         self.assertEqual([item["seed"] for item in details["seed_results"]], [42, 2026])
         self.assertAlmostEqual(details["ensemble_brier"], float(np.mean((prediction - y_val) ** 2)))
 
@@ -59,6 +77,17 @@ class CandidateHypothesisTests(unittest.TestCase):
         prepared_train, prepared_val, dropped, _ = apply_feature_policy(train, val, "drop_season")
         self.assertEqual(dropped, ["season"])
         self.assertEqual(prepared_train.columns.tolist(), ["x"])
+        self.assertEqual(prepared_train.columns.tolist(), prepared_val.columns.tolist())
+
+    def test_drop_player_ids_removes_players_but_keeps_team_ids(self):
+        train = pd.DataFrame({
+            "pitcher_id": [1], "batter_id": [2],
+            "pitcher_team_id": [10], "batter_team_id": [20], "x": [3.0],
+        })
+        val = train.copy()
+        prepared_train, prepared_val, dropped, _ = apply_feature_policy(train, val, "drop_player_ids")
+        self.assertEqual(dropped, ["pitcher_id", "batter_id"])
+        self.assertEqual(prepared_train.columns.tolist(), ["pitcher_team_id", "batter_team_id", "x"])
         self.assertEqual(prepared_train.columns.tolist(), prepared_val.columns.tolist())
 
     def test_psi_policy_uses_training_seasons_only(self):

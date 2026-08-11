@@ -68,6 +68,18 @@ class LightGBMSafetyTests(unittest.TestCase):
         self.assertEqual([item["seed"] for item in details["seed_results"]], [42, 2026])
         self.assertAlmostEqual(details["ensemble_brier"], float(np.mean((prediction - y_val) ** 2)))
 
+    def test_lightgbm_accepts_training_sample_weight(self):
+        train, validation = self.sample_frames()
+        y_train = np.array([0, 1] * 10)
+        prediction, _ = fit_predict("lightgbm", train, y_train, validation, {
+            "seed": 42, "seeds": [42], "n_estimators": 3, "min_child_samples": 2,
+            "early_stopping_rounds": 2, "categorical": ["top_bottom", "game_type", "base_state"],
+            "n_jobs": 1, "max_model_seconds": 30, "min_available_memory_bytes": 0,
+            "sample_weight": np.linspace(1.0, 2.0, len(y_train)),
+            "y_val": np.array([0, 1, 0, 1, 0, 1]),
+        })
+        self.assertEqual(len(prediction), len(validation))
+
 
 if __name__ == "__main__":
     unittest.main()

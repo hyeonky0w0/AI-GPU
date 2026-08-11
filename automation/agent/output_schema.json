@@ -4,7 +4,7 @@
   "additionalProperties": false,
   "required": [
     "status", "hypothesis_id", "config_hash", "hypothesis", "rationale", "files_changed",
-    "tests_passed", "smoke_run_id", "smoke_metrics", "leakage_checks",
+    "tests_passed", "smoke_run_id", "smoke_metrics", "quick_run_id", "quick_metrics", "leakage_checks",
     "failure_reason", "next_recommendation"
   ],
   "properties": {
@@ -17,6 +17,20 @@
     "tests_passed": {"type": "boolean"},
     "smoke_run_id": {"type": ["string", "null"]},
     "smoke_metrics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "value", "split"],
+        "properties": {
+          "name": {"type": "string"},
+          "value": {"type": ["number", "null"]},
+          "split": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "quick_run_id": {"type": ["string", "null"]},
+    "quick_metrics": {
       "type": "array",
       "items": {
         "type": "object",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import time
 from typing import Any
 
@@ -101,6 +102,7 @@ def select_nonnegative_oof_weight(
 
 
 def fit_predict(model_type: str, X_train: pd.DataFrame, y_train: np.ndarray, X_val: pd.DataFrame, config: dict[str, Any]) -> tuple[np.ndarray, Any]:
+    sample_weight = config.get("sample_weight")
     if model_type == "logistic":
         model = build_logistic(X_train, int(config["seed"]), int(config.get("max_iter", 500)))
         model.fit(X_train, y_train)
@@ -125,7 +127,6 @@ def fit_predict(model_type: str, X_train: pd.DataFrame, y_train: np.ndarray, X_v
         seeds = [int(seed) for seed in config.get("seeds", [config.get("seed", 42)])]
         seed_predictions: list[np.ndarray] = []
         seed_results: list[dict[str, Any]] = []
-        models: list[Any] = []
         for seed in seeds:
             started = time.monotonic()
             if psutil.virtual_memory().available < int(config.get("min_available_memory_bytes", 0)):
@@ -136,7 +137,7 @@ def fit_predict(model_type: str, X_train: pd.DataFrame, y_train: np.ndarray, X_v
                 early_stopping_rounds=int(config.get("early_stopping_rounds", 100)),
                 allow_writing_files=False, thread_count=8, random_seed=seed, verbose=False,
             )
-            model.fit(train, y_train, cat_features=categorical, eval_set=(validation, config["y_val"]), verbose=False)
+            model.fit(train, y_train, sample_weight=sample_weight, cat_features=categorical, eval_set=(validation, config["y_val"]), verbose=False)
             elapsed = time.monotonic() - started
             if elapsed > float(config.get("max_model_seconds", 3600)):
                 raise TimeoutError("CatBoost 모델 시간 예산 초과")
@@ -150,11 +151,11 @@ def fit_predict(model_type: str, X_train: pd.DataFrame, y_train: np.ndarray, X_v
                 "best_iteration": int(model.get_best_iteration() + 1),
                 "runtime_seconds": elapsed,
             })
-            models.append(model)
+            del model
+            gc.collect()
         matrix = np.column_stack(seed_predictions)
         ensemble_prediction = matrix.mean(axis=1)
         return ensemble_prediction, {
-            "models": models,
             "seed_predictions": matrix,
             "seed_results": seed_results,
             "ensemble_brier": float(np.mean((ensemble_prediction - np.asarray(config["y_val"])) ** 2)),
@@ -170,7 +171,6 @@ def fit_predict(model_type: str, X_train: pd.DataFrame, y_train: np.ndarray, X_v
         seeds = [int(seed) for seed in config.get("seeds", [config.get("seed", 42)])]
         seed_predictions: list[np.ndarray] = []
         seed_results: list[dict[str, Any]] = []
-        models: list[Any] = []
         for seed in seeds:
             model_started = time.monotonic()
             model = lgb.LGBMClassifier(
@@ -197,6 +197,7 @@ def fit_predict(model_type: str, X_train: pd.DataFrame, y_train: np.ndarray, X_v
             model.fit(
                 train,
                 y_train,
+                sample_weight=sample_weight,
                 eval_X=validation,
                 eval_y=config["y_val"],
                 eval_metric="binary_logloss",
@@ -213,11 +214,11 @@ def fit_predict(model_type: str, X_train: pd.DataFrame, y_train: np.ndarray, X_v
                 "best_iteration": int(model.best_iteration_ or config.get("n_estimators", 0)),
                 "runtime_seconds": time.monotonic() - model_started,
             })
-            models.append(model)
+            del model
+            gc.collect()
         matrix = np.column_stack(seed_predictions)
         ensemble_prediction = matrix.mean(axis=1)
         return ensemble_prediction, {
-            "models": models,
             "seed_predictions": matrix,
             "seed_results": seed_results,
             "ensemble_brier": float(np.mean((ensemble_prediction - np.asarray(config["y_val"])) ** 2)),
