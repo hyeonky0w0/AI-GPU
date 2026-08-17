@@ -1,43 +1,25 @@
-import json
-import subprocess
-from pathlib import Path
-
 import runpod
+import torch
 
 
-def handler(event):
-    print("===== EXPERIMENT START =====")
+def handler(job):
+    print("===== GPU TEST START =====")
 
-    results_dir = Path("results")
-    results_dir.mkdir(exist_ok=True)
+    cuda_available = torch.cuda.is_available()
+    gpu_name = None
 
-    result = subprocess.run(
-        ["python", "src/train.py"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+    if cuda_available:
+        gpu_name = torch.cuda.get_device_name(0)
 
-    with (results_dir / "train.log").open("w", encoding="utf-8") as file:
-        file.write(result.stdout)
-        file.write("\n")
-        file.write(result.stderr)
-
-    if result.returncode != 0:
-        return {
-            "status": "failed",
-            "error": result.stderr,
-        }
-
-    with (results_dir / "metrics.json").open(encoding="utf-8") as file:
-        metrics = json.load(file)
+    print(f"CUDA available: {cuda_available}")
+    print(f"GPU: {gpu_name}")
 
     return {
         "status": "success",
-        "metrics": metrics,
+        "cuda_available": cuda_available,
+        "gpu_name": gpu_name,
     }
 
 
-runpod.serverless.start({"handler": handler})
+if __name__ == "__main__":
+    runpod.serverless.start({"handler": handler})
