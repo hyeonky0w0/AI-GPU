@@ -1,11 +1,11 @@
-FROM runpod/base:0.6.3-cuda11.8.0
+FROM pytorch/pytorch:2.12.0-cuda13.0-cudnn9-runtime
 
-WORKDIR /
+WORKDIR /app
 
-COPY requirements.txt /requirements.txt
+RUN pip install --no-cache-dir runpod
 
-RUN uv pip install --system --no-cache -r /requirements.txt
+COPY requirements.txt /app/requirements.txt
+COPY handler.py /app/handler.py
+COPY src /app/src
 
-COPY handler.py /handler.py
-
-CMD ["python", "-u", "/handler.py"]
+CMD ["python", "-u", "/app/handler.py"]

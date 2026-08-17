@@ -1,53 +1,132 @@
 name: GPU Experiment
 
 on:
-  workflow_dispatch:
   push:
     branches:
-      - "feature/**"
-    paths:
-      - "src/**"
-      - "config/**"
-      - ".github/workflows/gpu-experiment.yml"
-
-concurrency:
-  group: gpu-experiment-${{ github.ref }}
-  cancel-in-progress: false
+      - '**'
 
 jobs:
-  experiment:
+  run-gpu-experiment:
     runs-on: ubuntu-latest
-    timeout-minutes: 130
-    permissions:
-      contents: read
 
     steps:
-      - name: Check out current branch
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v6
 
-      - name: Build RunPod request
-        env:
-          EXPERIMENT_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-          GIT_BRANCH: ${{ github.ref_name }}
-          GIT_SHA: ${{ github.sha }}
-          EXECUTION_TIMEOUT_MS: "3600000"
-          JOB_TTL_MS: "7200000"
-        run: python scripts/package_job.py
-
-      - name: Run experiment and collect results
+      - name: Run experiment on RunPod
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
           RUNPOD_ENDPOINT_ID: ${{ secrets.RUNPOD_ENDPOINT_ID }}
-          POLL_TIMEOUT_SECONDS: "7200"
-        run: python scripts/runpod_job.py
+          BRANCH_NAME: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          endpoint = os.environ["RUNPOD_ENDPOINT_ID"]
+          api_key = os.environ["RUNPOD_API_KEY"]
+
+          payload = {
+              "input": {
+                  "experiment_id": os.environ["COMMIT_SHA"][:8],
+                  "branch": os.environ["BRANCH_NAME"]
+              }
+          }
+
+          request = urllib.request.Request(
+              f"https://api.runpod.ai/v2/{endpoint}/run",
+              data=json.dumps(payload).encode(),
+              headers={
+                  "Content-Type": "application/json",
+                  "Authorization": f"Bearer {api_key}",
+              },
+              method="POST",
+          )
+
+          with urllib.request.urlopen(request) as response:
+              result = json.load(response)
+
+          print(json.dumps(result, indent=2))
+
+          with open("runpod_job.json", "w") as f:
+              json.dump(result, f, indent=2)
+
+          job_id = result["id"]
+
+          with open("job_id.txt", "w") as f:
+              f.write(job_id)
+          PY
+
+      - name: Wait for RunPod
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          RUNPOD_ENDPOINT_ID: ${{ secrets.RUNPOD_ENDPOINT_ID }}
+        run: |
+          for i in {1..120}; do
+
+            RESPONSE=$(curl -s \
+              -H "Authorization: Bearer $RUNPOD_API_KEY" \
+              "https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID/status/$(cat job_id.txt)")
+
+            echo "$RESPONSE"
+
+            STATUS=$(echo "$RESPONSE" | python -c "
+          import sys,json
+          print(json.load(sys.stdin).get('status',''))
+          ")
+
+            if [ "$STATUS" = "COMPLETED" ]; then
+              echo "$RESPONSE" > runpod_result.json
+              exit 0
+            fi
+
+            if [ "$STATUS" = "FAILED" ]; then
+              echo "$RESPONSE" > runpod_result.json
+              exit 1
+            fi
+
+            sleep 5
+          done
+
+          echo "RunPod timeout"
+          exit 1
+
+      - name: Save results
+        if: always()
+        run: |
+          mkdir -p results
+
+          python - <<'PY'
+          import json
+
+          with open("runpod_result.json") as f:
+              data = json.load(f)
+
+          output = data.get("output", {})
+
+          with open("results/metrics.json", "w") as f:
+              json.dump(
+                  output.get("metrics", {}),
+                  f,
+                  indent=2
+              )
+
+          with open("results/train.log", "w") as f:
+              f.write(output.get("train_log", ""))
+
+          with open("results/error.log", "w") as f:
+              f.write(output.get("error_log", ""))
+
+          with open("results/runpod_result.json", "w") as f:
+              json.dump(data, f, indent=2)
+          PY
 
       - name: Upload experiment results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: experiment-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            results/
-            runpod-response.json
-          if-no-files-found: warn
-          retention-days: 30
+          name: gpu-experiment-${{ github.ref_name }}-${{ github.sha }}
+          path: results/
+          retention-days: 14
