@@ -6,10 +6,13 @@ WORKDIR /app
 
 COPY requirements.txt /app/requirements.txt
 
-RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN uv pip install --system --break-system-packages --no-cache \
+    -r /app/requirements.txt
 
 COPY handler.py /app/handler.py
 COPY src /app/src
 COPY config /app/config
+
+ENTRYPOINT []
 
 CMD ["python", "-u", "/app/handler.py"]
