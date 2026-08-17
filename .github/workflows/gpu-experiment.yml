@@ -3,9 +3,7 @@ name: LG Aimers GPU Experiment
 on:
   push:
     branches:
-      - "gpu/**"
-      - "feature/**"
-      - "experiment/**"
+      - "**"
   workflow_dispatch:
     inputs:
       execution_mode:
