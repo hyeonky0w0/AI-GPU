@@ -1,0 +1,17 @@
+{
+  "experiment": "035_anchored_dynamic_moe",
+  "anchor_name": "champion_890",
+  "max_total_intervention": 0.3,
+  "gain_scale": 0.002,
+  "bias_segments": ["game_type"],
+  "max_segment_bias_correction": 0.01,
+  "gate_features": [
+    "season", "game_type", "top_bottom", "inning", "balls_before",
+    "strikes_before", "base_state", "score_diff_home", "pitcher_hand",
+    "batter_hand", "asof_pitcher_n", "asof_pitcher_success_rate",
+    "asof_pitcher_prev5_game_success_rate"
+  ],
+  "categorical_gate_features": ["game_type", "top_bottom", "base_state", "pitcher_hand", "batter_hand"],
+  "rolling_policy": "각 검증연도 gate는 그보다 이른 연도의 OOF 행으로만 적합한다. 과거 OOF가 없으면 anchor를 그대로 사용한다.",
+  "oof_contract": "fold_<year>.npz에는 row_id, y_true, p_anchor 및 p_<expert> 배열이 있어야 하며, features_<year>.parquet에는 같은 row_id와 gate_features가 있어야 한다."
+}

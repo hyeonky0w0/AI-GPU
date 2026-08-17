@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "experiment_id": "035_anchored_dynamic_moe",
+  "execution_mode": "gate_smoke",
+  "entrypoint": "experiments/035_anchored_dynamic_moe/src/train_gate.py",
+  "network_volume": {
+    "root": "/runpod-volume/LG_Aimers_data",
+    "required_data_files": ["train.csv", "test.csv", "trackman_history.csv"],
+    "oof_directory": "oof/035_anchored_dynamic_moe"
+  },
+  "result_contract": {
+    "required": ["metrics.json", "train.log", "error.log"],
+    "inline_result_limit_mb": 6
+  },
+  "safety": {
+    "allow_full_training": false,
+    "reason": "Champion OOF가 아직 없으므로 gate smoke와 볼륨 검증만 자동 실행한다. rolling gate는 명시적 승인 뒤 workflow_dispatch로만 실행한다."
+  }
+}

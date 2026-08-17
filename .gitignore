@@ -36,3 +36,16 @@ Thumbs.db
 /automation/runs/
 
 /1차_CatBoost.ipynb
+
+# RunPod job bundle에 필요한 035 코드·설정·실험 기록만 version control한다.
+# outputs/와 OOF/model은 계속 무시하여 GitHub 또는 job payload로 전송되지 않는다.
+!experiments/
+experiments/*
+!experiments/035_anchored_dynamic_moe/
+experiments/035_anchored_dynamic_moe/*
+!experiments/035_anchored_dynamic_moe/config.json
+!experiments/035_anchored_dynamic_moe/README.md
+!experiments/035_anchored_dynamic_moe/RESULT.md
+!experiments/035_anchored_dynamic_moe/src/
+experiments/035_anchored_dynamic_moe/src/*
+!experiments/035_anchored_dynamic_moe/src/train_gate.py
