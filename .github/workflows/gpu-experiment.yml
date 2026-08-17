@@ -41,11 +41,16 @@ jobs:
           POLL_TIMEOUT_SECONDS: "7200"
         run: python runpod/lg_aimers/scripts/runpod_job.py
 
+      - name: Make artifact name filesystem-safe
+        if: always()
+        shell: bash
+        run: echo "SAFE_REF_NAME=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
+
       - name: Upload small experiment results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: lg-aimers-${{ env.LG_AIMERS_EXECUTION_MODE }}-${{ github.ref_name }}-${{ github.sha }}
+          name: lg-aimers-${{ env.LG_AIMERS_EXECUTION_MODE }}-${{ env.SAFE_REF_NAME }}-${{ github.sha }}
           path: |
             results/
             runpod-response.json

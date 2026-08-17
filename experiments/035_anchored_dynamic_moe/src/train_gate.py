@@ -11,12 +11,6 @@ import json
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
-from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import HistGradientBoostingRegressor
-from sklearn.impute import SimpleImputer
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OrdinalEncoder
 
 EXP = Path(__file__).resolve().parents[1]
 CFG = json.loads((EXP / "config.json").read_text(encoding="utf-8"))
@@ -27,7 +21,14 @@ def brier(y: np.ndarray, p: np.ndarray) -> float:
     return float(np.mean((y - p) ** 2))
 
 
-def make_gate() -> Pipeline:
+def make_gate():
+    """실제 OOF gate 경로에서만 pandas/scikit-learn을 요구한다."""
+    from sklearn.compose import ColumnTransformer
+    from sklearn.ensemble import HistGradientBoostingRegressor
+    from sklearn.impute import SimpleImputer
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import OrdinalEncoder
+
     cats = CFG["categorical_gate_features"]
     nums = [x for x in CFG["gate_features"] if x not in cats]
     pre = ColumnTransformer([
@@ -58,7 +59,9 @@ def gated_prediction(anchor: np.ndarray, experts: dict[str, np.ndarray],
     return np.clip(pred, 0.0, 1.0), np.sum(list(weights.values()), axis=0)
 
 
-def load_fold(year: int) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, dict[str, np.ndarray]]:
+def load_fold(year: int):
+    import pandas as pd
+
     packed = np.load(OOF_DIR / f"fold_{year}.npz", allow_pickle=False)
     needed = {"row_id", "y_true", "p_anchor"}
     if not needed.issubset(packed.files):
@@ -79,7 +82,7 @@ def load_fold(year: int) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, dict[str
 
 
 def fit_segment_bias(pred: np.ndarray, anchor: np.ndarray, y: np.ndarray,
-                     segment: pd.Series) -> dict[str, float]:
+                     segment) -> dict[str, float]:
     """교정용 OOF에서만 anchor 대비 잔차 이동을 추정한다."""
     corrections: dict[str, float] = {}
     cap = float(CFG["max_segment_bias_correction"])
@@ -91,7 +94,7 @@ def fit_segment_bias(pred: np.ndarray, anchor: np.ndarray, y: np.ndarray,
     return corrections
 
 
-def apply_segment_bias(pred: np.ndarray, segment: pd.Series,
+def apply_segment_bias(pred: np.ndarray, segment,
                        corrections: dict[str, float]) -> np.ndarray:
     """미래 행에는 이미 과거 OOF로 고정한 구간별 보정만 적용한다."""
     out = pred.copy()
@@ -101,10 +104,12 @@ def apply_segment_bias(pred: np.ndarray, segment: pd.Series,
     return np.clip(out, 0.0, 1.0)
 
 
-def predict_from_prior(prior_data: list[tuple[pd.DataFrame, np.ndarray, np.ndarray, dict[str, np.ndarray]]],
-                       target_frame: pd.DataFrame, target_anchor: np.ndarray,
+def predict_from_prior(prior_data: list[tuple],
+                       target_frame, target_anchor: np.ndarray,
                        target_experts: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
     """지정 target보다 과거인 OOF만 써서 raw dynamic prediction을 만든다."""
+    import pandas as pd
+
     if not prior_data:
         return target_anchor.copy(), np.zeros_like(target_anchor)
     train_x = pd.concat([v[0] for v in prior_data], ignore_index=True)
@@ -140,6 +145,8 @@ def main() -> None:
     if args.smoke:
         smoke()
         return
+    import pandas as pd
+
     years = [int(x) for x in args.years.split(",")]
     loaded = {year: load_fold(year) for year in years}
     rows = []
