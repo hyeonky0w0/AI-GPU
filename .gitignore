@@ -1,7 +1,5 @@
 __pycache__/
 *.py[cod]
-
-# Runtime outputs (keep the directory itself in Git)
 results/*
 !results/.gitkeep
 job-request.json

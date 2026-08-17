@@ -1,13 +1,12 @@
 {
   "seed": 42,
   "data": {
-    "sample_rows": 200,
-    "train_ratio": 0.8,
-    "uri": null
+    "sample_rows": 2000,
+    "train_ratio": 0.8
   },
   "model": {
-    "type": "linear_baseline",
-    "learning_rate": 0.1,
-    "epochs": 200
+    "type": "MLP",
+    "learning_rate": 0.01,
+    "epochs": 100
   }
 }

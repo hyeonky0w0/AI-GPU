@@ -1,1 +1,1 @@
-runpod
+runpod==1.11.0

@@ -1,5 +1,6 @@
 .git
-.gitignore
+.github
+.idea
 __pycache__
 *.py[cod]
 results/*
