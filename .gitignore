@@ -4,3 +4,5 @@ __pycache__/
 # Runtime outputs (keep the directory itself in Git)
 results/*
 !results/.gitkeep
+job-request.json
+runpod-response.json

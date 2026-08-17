@@ -1,0 +1,13 @@
+{
+  "seed": 42,
+  "data": {
+    "sample_rows": 200,
+    "train_ratio": 0.8,
+    "uri": null
+  },
+  "model": {
+    "type": "linear_baseline",
+    "learning_rate": 0.1,
+    "epochs": 200
+  }
+}

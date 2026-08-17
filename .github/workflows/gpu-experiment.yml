@@ -1,0 +1,53 @@
+name: GPU Experiment
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "feature/**"
+    paths:
+      - "src/**"
+      - "config/**"
+      - ".github/workflows/gpu-experiment.yml"
+
+concurrency:
+  group: gpu-experiment-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  experiment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 130
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out current branch
+        uses: actions/checkout@v4
+
+      - name: Build RunPod request
+        env:
+          EXPERIMENT_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          GIT_BRANCH: ${{ github.ref_name }}
+          GIT_SHA: ${{ github.sha }}
+          EXECUTION_TIMEOUT_MS: "3600000"
+          JOB_TTL_MS: "7200000"
+        run: python scripts/package_job.py
+
+      - name: Run experiment and collect results
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          RUNPOD_ENDPOINT_ID: ${{ secrets.RUNPOD_ENDPOINT_ID }}
+          POLL_TIMEOUT_SECONDS: "7200"
+        run: python scripts/runpod_job.py
+
+      - name: Upload experiment results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: experiment-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            results/
+            runpod-response.json
+          if-no-files-found: warn
+          retention-days: 30

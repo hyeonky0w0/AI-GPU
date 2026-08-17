@@ -1,10 +1,15 @@
-FROM pytorch/pytorch:2.12.0-cuda13.0-cudnn9-runtime
+FROM runpod/base:0.6.3-cuda11.8.0
 
-WORKDIR /app
+RUN ln -sf $(which python3.11) /usr/local/bin/python && \
+    ln -sf $(which python3.11) /usr/local/bin/python3
 
-RUN python -m pip install --upgrade pip
-RUN python -m pip install --no-cache-dir --index-url https://pypi.org/simple runpod==1.11.0
+COPY requirements.txt /requirements.txt
 
-COPY handler.py /app/handler.py
+RUN uv pip install --upgrade \
+    -r /requirements.txt \
+    --no-cache-dir \
+    --system
 
-CMD ["python", "-u", "/app/handler.py"]
+COPY handler.py /handler.py
+
+CMD ["python", "-u", "/handler.py"]
