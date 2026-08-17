@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM pytorch/pytorch:2.12.0-cuda13.0-cudnn9-runtime
 
 WORKDIR /app
 
