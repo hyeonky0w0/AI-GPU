@@ -1,11 +1,9 @@
-FROM runpod/pytorch:2.0.1-py3.10-cuda11.8.0-devel-ubuntu22.04
+FROM python:3.10-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+RUN pip install --no-cache-dir runpod
 
-RUN pip install --no-cache-dir -r requirements.txt
+COPY handler.py /app/handler.py
 
-COPY . .
-
-CMD ["python", "-u", "handler.py"]
+CMD ["python3", "-u", "/app/handler.py"]

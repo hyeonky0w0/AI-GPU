@@ -1,25 +1,16 @@
 import runpod
-import torch
 
 
 def handler(job):
-    print("===== GPU TEST START =====")
-
-    cuda_available = torch.cuda.is_available()
-    gpu_name = None
-
-    if cuda_available:
-        gpu_name = torch.cuda.get_device_name(0)
-
-    print(f"CUDA available: {cuda_available}")
-    print(f"GPU: {gpu_name}")
+    print("===== HANDLER STARTED =====", flush=True)
 
     return {
         "status": "success",
-        "cuda_available": cuda_available,
-        "gpu_name": gpu_name,
+        "message": "RunPod works!",
     }
 
 
 if __name__ == "__main__":
-    runpod.serverless.start({"handler": handler})
+    runpod.serverless.start({
+        "handler": handler
+    })
