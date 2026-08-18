@@ -1,0 +1,47 @@
+{
+  "experiment_id": "039_real_mlp_oof",
+  "contract_status": "exact_890_assets_found",
+  "reference": {
+    "leaderboard_score": 890,
+    "checkpoint_relative_path": "assets/mlp_snap345.pkl",
+    "checkpoint_sha256": "1c726f98410c000f583977d0ebb69cccdff38715da98932e505f6b24c018fe04",
+    "sklearn_version": "1.8.0",
+    "manual_ensemble_tolerance": 1e-12
+  },
+  "folds": {
+    "2022": [2019, 2020, 2021],
+    "2023": [2019, 2020, 2021, 2022],
+    "2024": [2019, 2020, 2021, 2022, 2023]
+  },
+  "model": {
+    "implementation": "sklearn.neural_network.MLPClassifier",
+    "hidden_layer_sizes": [256, 128],
+    "activation": "relu",
+    "solver": "adam",
+    "alpha": 0.0001,
+    "batch_size": 512,
+    "learning_rate_init": 0.001,
+    "shuffle": true,
+    "loss": "binary log loss",
+    "seeds": [42, 43, 44, 45, 46, 47, 48, 49, 50, 51],
+    "snapshot_epochs": [3, 4, 5],
+    "members": 30,
+    "prediction": "10 seeds x epochs 3,4,5 predict_proba arithmetic mean"
+  },
+  "preprocessing": {
+    "input_feature_count": 47,
+    "used_feature_count": 37,
+    "numeric": "median imputation -> QuantileTransformer(normal,n_quantiles=1000,subsample=200000,random_state=0) + MissingIndicator",
+    "season": "StandardScaler only",
+    "categorical": "OneHotEncoder(handle_unknown=ignore,dense)",
+    "fit_scope": "training seasons only"
+  },
+  "router": {
+    "architecture": "038의 linear softmax gate를 변경 없이 사용",
+    "outer_folds": {"2023": [2022], "2024": [2022, 2023]},
+    "l2": 0.001,
+    "max_iterations": 100
+  },
+  "smoke": {"max_rows_per_season": 128, "seeds": [42], "snapshot_epochs": [1]},
+  "full_training_local_forbidden": true
+}

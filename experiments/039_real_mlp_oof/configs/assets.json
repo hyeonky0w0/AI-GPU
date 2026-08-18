@@ -1,0 +1,18 @@
+{
+  "network_volume_layout": {
+    "checkpoint": "assets/mlp_snap345.pkl",
+    "lightweight_oof": "router_sources/lightweight_oof_predictions.csv.gz",
+    "catboost": "router_sources/catboost/fold_{year}.npz",
+    "lightgbm": "router_sources/lightgbm/fold_{year}.npz"
+  },
+  "sha256": {
+    "assets/mlp_snap345.pkl": "1c726f98410c000f583977d0ebb69cccdff38715da98932e505f6b24c018fe04",
+    "router_sources/catboost/fold_2022.npz": "0b412e1b738f7af6a34f2d57af16eb89754cacb644c57edfe0af8cf0ab4aa2bc",
+    "router_sources/catboost/fold_2023.npz": "5bed5b35ec5dbd5fba871b90657f601331ab51017ece9637182945ea3b16c9e9",
+    "router_sources/catboost/fold_2024.npz": "cdefdbfb4a78870f71725b1e1b9fa2f95610ccdb2d8d731e52e01bddceb437f0",
+    "router_sources/lightgbm/fold_2022.npz": "5697cb8750529c5be1273c2a3e52e857183610e20b66de43362a0279bb457035",
+    "router_sources/lightgbm/fold_2023.npz": "561f41a3dc13c8281fc8b89679ecf550d8276e725d3dd88a977593171742f0797",
+    "router_sources/lightgbm/fold_2024.npz": "13df97e6e8d3481f9338a393b1fe6fcc683d945ad4f64bfc6e58840693bab7e6"
+  },
+  "note": "대형 checkpoint/OOF는 Git에 commit하지 않고 RunPod Network Volume에 둔다. lightweight OOF는 037 결과에서 필요한 열을 gzip CSV로 준비한다."
+}

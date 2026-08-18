@@ -48,7 +48,7 @@ def copy_small_outputs(experiment_dir: Path, results_dir: Path) -> list[str]:
     destination = results_dir / "experiment_outputs"
     copied: list[str] = []
     for path in source.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in {".csv", ".json", ".md", ".txt"}:
+        if not path.is_file() or path.suffix.lower() not in {".csv", ".gz", ".npz", ".json", ".md", ".txt", ".log"}:
             continue
         relative = path.relative_to(source)
         target = destination / relative
@@ -144,6 +144,25 @@ def main() -> None:
             elif filename == "error.log":
                 target.write_text("", encoding="utf-8")
         metadata["status"] = "success"
+    elif mode == "real_mlp_oof":
+        if config["safety"]["allow_full_training"] is not True:
+            raise PermissionError("real_mlp_oof full training이 config에서 승인되지 않았습니다.")
+        root = require_volume(config)
+        gpu = gpu_metadata()
+        if not gpu.get("cuda_available"):
+            raise RuntimeError("GPU runner 계약 위반: CUDA device를 찾지 못했습니다.")
+        bundle_root = Path(args.config).resolve().parent.parent
+        requirements_path = bundle_root / "requirements.txt"
+        install = subprocess.run([sys.executable, "-m", "pip", "install", "-r", str(requirements_path), "--disable-pip-version-check"], text=True, capture_output=True)
+        (results_dir / "pip_install.log").write_text((install.stdout or "")+(install.stderr or ""),encoding="utf-8")
+        if install.returncode: raise RuntimeError("039 dependency 설치 실패")
+        output_dir = experiment_root / "outputs"; output_dir.mkdir(exist_ok=True)
+        build = subprocess.run([sys.executable,str(experiment_dir),"--data-root",str(root),"--asset-root",str(root/"assets"),"--output-dir",str(output_dir)],text=True)
+        if build.returncode: raise RuntimeError(f"real 890 MLP OOF 실패 (exit_code={build.returncode})")
+        router = Path(__file__).resolve().parent / config["router_entrypoint"]
+        evaluate = subprocess.run([sys.executable,str(router),"--data-root",str(root),"--asset-root",str(root),"--mlp-oof",str(output_dir/"mlp_oof_predictions.csv.gz"),"--output-dir",str(output_dir)],text=True)
+        if evaluate.returncode: raise RuntimeError(f"Router 평가 실패 (exit_code={evaluate.returncode})")
+        metadata.update(gpu); metadata["network_volume"]=str(root); metadata["copied_outputs"]=copy_small_outputs(experiment_root,results_dir); metadata["status"]="success"
     else:
         raise ValueError(f"지원하지 않는 execution_mode: {mode}")
 

@@ -7,11 +7,11 @@ on:
   workflow_dispatch:
     inputs:
       execution_mode:
-        description: "gate_smoke은 안전 기본값, verify_volume은 데이터 연결만 검사, gate_rolling은 승인된 OOF gate 실행, gpu_mlp_smoke는 독립 GPU 학습 점검"
+        description: "real_mlp_oof는 실제 890 MLP rolling OOF와 고정 Router 비교를 RunPod에서 실행"
         required: true
         default: "gate_smoke"
         type: choice
-        options: ["gate_smoke", "verify_volume", "gate_rolling", "gpu_mlp_smoke"]
+        options: ["gate_smoke", "verify_volume", "gate_rolling", "gpu_mlp_smoke", "real_mlp_oof"]
 
 concurrency:
   group: lg-aimers-gpu-${{ github.ref }}
@@ -20,7 +20,7 @@ concurrency:
 jobs:
   run-gpu-experiment:
     runs-on: ubuntu-latest
-    timeout-minutes: 130
+    timeout-minutes: 240
     permissions:
       contents: read
     env:
@@ -38,7 +38,7 @@ jobs:
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
           RUNPOD_ENDPOINT_ID: ${{ secrets.RUNPOD_ENDPOINT_ID }}
-          POLL_TIMEOUT_SECONDS: "7200"
+          POLL_TIMEOUT_SECONDS: "13800"
         run: python runpod/lg_aimers/scripts/runpod_job.py
 
       - name: Make artifact name filesystem-safe
@@ -46,7 +46,7 @@ jobs:
         shell: bash
         run: echo "SAFE_REF_NAME=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
 
-      - name: Upload small experiment results
+      - name: Upload experiment results
         if: always()
         uses: actions/upload-artifact@v4
         with:

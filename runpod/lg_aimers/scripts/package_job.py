@@ -16,6 +16,7 @@ EXPERIMENTS = {
     "verify_volume": ROOT / "experiments" / "035_anchored_dynamic_moe",
     "gate_rolling": ROOT / "experiments" / "035_anchored_dynamic_moe",
     "gpu_mlp_smoke": ROOT / "experiments" / "036_gpu_tabular_mlp_smoke",
+    "real_mlp_oof": ROOT / "experiments" / "039_real_mlp_oof",
 }
 MAX_BUNDLE_BYTES = 6 * 1024 * 1024
 
@@ -34,15 +35,15 @@ def main() -> None:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         add_file(archive, RUNTIME / "src" / "train.py", "src/train.py")
-        config_name = "experiment.json" if mode != "gpu_mlp_smoke" else "experiment_036.json"
+        config_name = {"gpu_mlp_smoke":"experiment_036.json", "real_mlp_oof":"experiment_039.json"}.get(mode,"experiment.json")
         config = json.loads((RUNTIME / "config" / config_name).read_text(encoding="utf-8"))
         config["execution_mode"] = mode
         archive.writestr("config/experiment.yaml", json.dumps(config, ensure_ascii=False, indent=2))
-        if mode == "gpu_mlp_smoke":
+        if mode in {"gpu_mlp_smoke", "real_mlp_oof"}:
             add_file(archive, experiment / "requirements.txt", "requirements.txt")
         for path in sorted(experiment.rglob("*")):
             if (path.is_file() and "__pycache__" not in path.parts and "outputs" not in path.parts
-                    and not (mode == "gpu_mlp_smoke" and path == experiment / "requirements.txt")):
+                    and not (mode in {"gpu_mlp_smoke", "real_mlp_oof"} and path == experiment / "requirements.txt")):
                 archive.write(path, (Path("src") / "experiments" / experiment.name / path.relative_to(experiment)).as_posix())
 
     raw = buffer.getvalue()

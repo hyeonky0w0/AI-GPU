@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "experiment_id": "039_real_mlp_oof",
+  "execution_mode": "real_mlp_oof",
+  "entrypoint": "experiments/039_real_mlp_oof/src/build_mlp_oof.py",
+  "router_entrypoint": "experiments/039_real_mlp_oof/src/evaluate_router.py",
+  "network_volume": {
+    "root": "/runpod-volume/LG_Aimers_data",
+    "required_data_files": [
+      "train.csv",
+      "assets/mlp_snap345.pkl",
+      "router_sources/lightweight_oof_predictions.csv.gz",
+      "router_sources/catboost/fold_2022.npz",
+      "router_sources/catboost/fold_2023.npz",
+      "router_sources/catboost/fold_2024.npz",
+      "router_sources/lightgbm/fold_2022.npz",
+      "router_sources/lightgbm/fold_2023.npz",
+      "router_sources/lightgbm/fold_2024.npz"
+    ]
+  },
+  "safety": {"allow_full_training": true, "local_full_training_forbidden": true},
+  "artifact_extensions": [".csv", ".gz", ".json", ".md", ".txt", ".log", ".npz"]
+}
