@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "experiment_id": "036_gpu_tabular_mlp_smoke",
+  "execution_mode": "gpu_mlp_smoke",
+  "entrypoint": "experiments/036_gpu_tabular_mlp_smoke/src/train.py",
+  "network_volume": {
+    "root": "/runpod-volume/LG_Aimers_data",
+    "required_data_files": ["train.csv"]
+  },
+  "model": {
+    "seed": 777,
+    "max_epochs": 5,
+    "batch_size": 2048,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "max_train_rows": null
+  },
+  "features": {
+    "categorical": ["top_bottom", "game_type", "base_state"]
+  }
+}

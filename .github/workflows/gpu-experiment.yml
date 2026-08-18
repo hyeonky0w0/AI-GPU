@@ -7,11 +7,11 @@ on:
   workflow_dispatch:
     inputs:
       execution_mode:
-        description: "gate_smoke은 안전 기본값, verify_volume은 데이터 연결만 검사, gate_rolling은 승인된 OOF gate 실행"
+        description: "gate_smoke은 안전 기본값, verify_volume은 데이터 연결만 검사, gate_rolling은 승인된 OOF gate 실행, gpu_mlp_smoke는 독립 GPU 학습 점검"
         required: true
         default: "gate_smoke"
         type: choice
-        options: ["gate_smoke", "verify_volume", "gate_rolling"]
+        options: ["gate_smoke", "verify_volume", "gate_rolling", "gpu_mlp_smoke"]
 
 concurrency:
   group: lg-aimers-gpu-${{ github.ref }}

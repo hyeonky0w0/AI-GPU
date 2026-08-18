@@ -107,10 +107,34 @@ def main() -> None:
         metadata["network_volume"] = str(root)
         metadata["copied_outputs"] = copy_small_outputs(experiment_root, results_dir)
         metadata["status"] = "success"
+    elif mode == "gpu_mlp_smoke":
+        root = require_volume(config)
+        process = subprocess.run([
+            sys.executable, str(experiment_dir), "--data-root", str(root),
+            "--config", str(args.config),
+        ], text=True)
+        if process.returncode:
+            raise RuntimeError(f"GPU MLP smoke 실패 (exit_code={process.returncode})")
+        metrics_path = experiment_root / "outputs" / "metrics.json"
+        if not metrics_path.is_file():
+            raise FileNotFoundError(f"GPU MLP metrics가 없습니다: {metrics_path}")
+        metadata.update(json.loads(metrics_path.read_text(encoding="utf-8")))
+        metadata["network_volume"] = str(root)
+        metadata["copied_outputs"] = copy_small_outputs(experiment_root, results_dir)
+        for filename in ("train.log", "error.log"):
+            source = experiment_root / "outputs" / filename
+            target = results_dir / filename
+            if source.is_file():
+                shutil.copy2(source, target)
+            elif filename == "error.log":
+                target.write_text("", encoding="utf-8")
+        metadata["status"] = "success"
     else:
         raise ValueError(f"지원하지 않는 execution_mode: {mode}")
 
-    metadata["train_seconds"] = round(time.monotonic() - started, 6)
+    worker_seconds = round(time.monotonic() - started, 6)
+    metadata["worker_seconds"] = worker_seconds
+    metadata.setdefault("train_seconds", worker_seconds)
     (results_dir / "metrics.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -131,4 +155,5 @@ if __name__ == "__main__":
                 "commit_sha": os.getenv("GIT_SHA", "unknown"),
                 **gpu_metadata(),
             }, ensure_ascii=False, indent=2), encoding="utf-8")
+            (failure_dir / "error.log").write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
         raise
