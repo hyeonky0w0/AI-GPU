@@ -102,7 +102,7 @@ def main() -> None:
     data_path = Path(args.data_root) / "train.csv"
     if not data_path.is_file():
         raise FileNotFoundError(f"Network Volume에 train.csv가 없습니다: {data_path}")
-    usecols = FEATURES + [TARGET]
+    usecols = ["row_id"] + FEATURES + [TARGET]
     frame = pd.read_csv(data_path, usecols=usecols, low_memory=False)
     train_frame = frame.loc[frame["season"] < 2024].copy()
     validation = frame.loc[frame["season"] == 2024].copy()
@@ -136,6 +136,11 @@ def main() -> None:
     started = time.perf_counter()
     best_brier = math.inf
     best_logloss = math.inf
+    best_epoch = 0
+    best_predictions: np.ndarray | None = None
+    best_state: dict[str, torch.Tensor] | None = None
+    stale_epochs = 0
+    patience = int(model_config.get("patience", 5))
     for epoch in range(1, int(model_config["max_epochs"]) + 1):
         model.train()
         losses = []
@@ -154,16 +159,36 @@ def main() -> None:
         probabilities = np.clip(probabilities, 1e-7, 1 - 1e-7)
         brier = float(np.mean((probabilities - y_validation) ** 2))
         logloss = float(-np.mean(y_validation * np.log(probabilities) + (1 - y_validation) * np.log(1 - probabilities)))
-        best_brier = min(best_brier, brier)
-        best_logloss = min(best_logloss, logloss)
+        if brier < best_brier:
+            best_brier = brier
+            best_logloss = logloss
+            best_epoch = epoch
+            best_predictions = probabilities.copy()
+            best_state = {name: value.detach().cpu().clone() for name, value in model.state_dict().items()}
+            stale_epochs = 0
+        else:
+            stale_epochs += 1
         log(f"epoch={epoch} train_loss={np.mean(losses):.6f} validation_brier={brier:.6f} validation_logloss={logloss:.6f}")
+        if stale_epochs >= patience:
+            log(f"early_stopping epoch={epoch} best_epoch={best_epoch} patience={patience}")
+            break
+    if best_predictions is None or best_state is None:
+        raise RuntimeError("best validation checkpoint가 생성되지 않았습니다")
+    model.load_state_dict(best_state)
     train_seconds = time.perf_counter() - started
+    validation_predictions = pd.DataFrame({
+        "row_id": validation["row_id"].astype(str).to_numpy(),
+        "y_true": y_validation.astype(np.int8),
+        "prediction": best_predictions,
+    })
+    validation_predictions.to_csv(output / "val_predictions.csv", index=False)
     metrics = {
         "experiment_id": config["experiment_id"], "status": "success", "gpu_name": gpu_name,
         "cuda_available": cuda_available, "cuda_version": cuda_version,
         "torch_version": torch.__version__, "device": str(device),
         "train_rows": len(train_frame), "validation_rows": len(validation),
-        "epochs": int(model_config["max_epochs"]), "train_seconds": train_seconds,
+        "epochs": int(model_config["max_epochs"]), "epochs_run": epoch,
+        "patience": patience, "best_epoch": best_epoch, "train_seconds": train_seconds,
         "best_brier": best_brier, "best_logloss": best_logloss,
     }
     (output / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -9,7 +9,8 @@
   },
   "model": {
     "seed": 777,
-    "max_epochs": 5,
+    "max_epochs": 20,
+    "patience": 5,
     "batch_size": 2048,
     "learning_rate": 0.001,
     "weight_decay": 0.0001,
