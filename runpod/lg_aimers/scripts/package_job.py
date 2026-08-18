@@ -38,8 +38,11 @@ def main() -> None:
         config = json.loads((RUNTIME / "config" / config_name).read_text(encoding="utf-8"))
         config["execution_mode"] = mode
         archive.writestr("config/experiment.yaml", json.dumps(config, ensure_ascii=False, indent=2))
+        if mode == "gpu_mlp_smoke":
+            add_file(archive, experiment / "requirements.txt", "requirements.txt")
         for path in sorted(experiment.rglob("*")):
-            if path.is_file() and "__pycache__" not in path.parts and "outputs" not in path.parts:
+            if (path.is_file() and "__pycache__" not in path.parts and "outputs" not in path.parts
+                    and not (mode == "gpu_mlp_smoke" and path == experiment / "requirements.txt")):
                 archive.write(path, (Path("src") / "experiments" / experiment.name / path.relative_to(experiment)).as_posix())
 
     raw = buffer.getvalue()

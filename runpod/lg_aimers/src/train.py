@@ -109,6 +109,21 @@ def main() -> None:
         metadata["status"] = "success"
     elif mode == "gpu_mlp_smoke":
         root = require_volume(config)
+        bundle_root = Path(args.config).resolve().parent.parent
+        requirements_path = bundle_root / "requirements.txt"
+        if not requirements_path.is_file():
+            raise FileNotFoundError(f"GPU MLP bundle requirements.txt가 없습니다: {requirements_path}")
+        install = subprocess.run([
+            sys.executable, "-m", "pip", "install", "-r", str(requirements_path),
+            "--disable-pip-version-check",
+        ], text=True, capture_output=True)
+        pip_output = (install.stdout or "") + (install.stderr or "")
+        (results_dir / "pip_install.log").write_text(pip_output, encoding="utf-8")
+        if install.returncode:
+            raise RuntimeError(
+                "GPU MLP dependency 설치 실패 (pip install -r requirements.txt):\n"
+                + pip_output[-12000:]
+            )
         process = subprocess.run([
             sys.executable, str(experiment_dir), "--data-root", str(root),
             "--config", str(args.config),
