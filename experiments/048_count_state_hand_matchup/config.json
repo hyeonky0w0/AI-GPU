@@ -1,0 +1,24 @@
+{
+  "experiment": "048_count_state_hand_matchup",
+  "max_runtime_seconds": 3600,
+  "seeds": [42, 43, 44, 45, 46, 47, 48, 49, 50, 51],
+  "candidate_a": {
+    "name": "joint_feature_lightgbm",
+    "features": ["count_state", "hand_matchup"],
+    "lgb_weight": 0.75,
+    "mlp_weight": 0.25,
+    "logit_shift": -0.03946
+  },
+  "candidate_b": {
+    "name": "fixed_046_047_blend",
+    "weight_046": 0.5,
+    "weight_047": 0.5
+  },
+  "acceptance": {
+    "max_2022_delta_vs_915": 0.0,
+    "max_2023_delta_vs_915": 0.00001,
+    "max_2024_delta_vs_915": 0.0,
+    "must_beat_046_overall": true,
+    "must_exceed_046_improvement": 0.000028849
+  }
+}
