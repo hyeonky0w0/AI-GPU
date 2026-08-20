@@ -8,7 +8,7 @@ on:
         required: true
         default: "gate_smoke"
         type: choice
-        options: ["gate_smoke", "verify_volume", "gate_rolling", "gpu_mlp_smoke", "real_mlp_oof", "bounded_crossfit_residual_mlp"]
+        options: ["gate_smoke", "verify_volume", "gate_rolling", "gpu_mlp_smoke", "real_mlp_oof", "bounded_crossfit_residual_mlp", "bounded_residual_dcn"]
       phase:
         description: "040 전용 단계(다른 execution_mode에서는 무시)"
         required: true
@@ -50,7 +50,7 @@ jobs:
         shell: bash
         run: |
           echo "SAFE_REF_NAME=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_ENV"
-          if [[ "$LG_AIMERS_EXECUTION_MODE" == "bounded_crossfit_residual_mlp" ]]; then
+          if [[ "$LG_AIMERS_EXECUTION_MODE" == "bounded_crossfit_residual_mlp" || "$LG_AIMERS_EXECUTION_MODE" == "bounded_residual_dcn" ]]; then
             echo "SAFE_ARTIFACT_MODE=${LG_AIMERS_EXECUTION_MODE}-${LG_AIMERS_EXPERIMENT_PHASE}" >> "$GITHUB_ENV"
           else
             echo "SAFE_ARTIFACT_MODE=${LG_AIMERS_EXECUTION_MODE}" >> "$GITHUB_ENV"

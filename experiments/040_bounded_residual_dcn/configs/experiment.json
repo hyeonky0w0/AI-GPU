@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "experiment_id": "040_bounded_residual_dcn",
+  "models": {"control": "ResidualMLP 256-128 ReLU", "challenger": "ResidualDCN cross2 + deep 256-128 ReLU"},
+  "learning_rate": 0.001,
+  "weight_decay": 0.01,
+  "batch_size": 1024,
+  "predict_batch_size": 8192,
+  "epochs": 30,
+  "early_stopping_patience": 4,
+  "gradient_clip": 1.0,
+  "train_lambda": 0.2,
+  "lambda_candidates": [0.0, 0.05, 0.1, 0.2],
+  "seeds": {"seed42": [42], "three_seed": [42, 777, 2026]},
+  "outer_folds": {"2023": [2022], "2024": [2022, 2023]},
+  "inner_selection": {"2023": "2022 first 80% train, last 20% validation", "2024": "2022 train, 2023 validation"},
+  "bootstrap_repeats": 1000,
+  "smoke_rows_per_fold": 512,
+  "acceptance": {"max_fold_degradation": 0.0001, "min_overall_improvement": 0.0002, "max_saturation_fraction": 0.05}
+}

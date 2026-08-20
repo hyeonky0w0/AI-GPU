@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "real_890_mlp_oof": "residual_sources/mlp_oof_predictions.csv.gz",
+    "lightgbm": "router_sources/lightgbm/fold_{year}.npz",
+    "catboost": "router_sources/catboost/fold_{year}.npz",
+    "final_test_predictions": "residual_sources/baseline_915_test_predictions.csv.gz"
+  },
+  "sha256": {
+    "residual_sources/mlp_oof_predictions.csv.gz": "92eeb64f41c0b71c6d15ce9e1b339a3d92cde1c0a0841f5a823d49fb086fb316",
+    "router_sources/catboost/fold_2022.npz": "0b412e1b738f7af6a34f2d57af16eb89754cacb644c57edfe0af8cf0ab4aa2bc",
+    "router_sources/catboost/fold_2023.npz": "5bed5b35ec5dbd5fba871b90657f601331ab51017ece9637182945ea3b16c9e9",
+    "router_sources/catboost/fold_2024.npz": "cdefdbfb4a78870f71725b1e1b9fa2f95610ccdb2d8d731e52e01bddceb437f0",
+    "router_sources/lightgbm/fold_2022.npz": "5697cb8750529c5be1273c2a3e52e857183610e20b66de43362a0279bb457035",
+    "router_sources/lightgbm/fold_2023.npz": "561f41a3dc13c8281fcb89679ecf550d8276e725d3dd88a977593171742f0797",
+    "router_sources/lightgbm/fold_2024.npz": "13df97e6e8d3481f9338a393b1fe6fcc683d945ad4f64bfc6e58840693bab7e6"
+  },
+  "final_test_contract": {"required_columns": ["row_id", "p_915", "p_lgb", "p_cat"], "sha256": null, "status": "blocked_until_exact_asset_registered"}
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "experiment_id": "040_bounded_residual_dcn",
+  "execution_mode": "bounded_residual_dcn",
+  "phase": "seed42",
+  "entrypoint": "experiments/040_bounded_residual_dcn/src/train_residual.py",
+  "network_volume": {
+    "root": "/runpod-volume/LG_Aimers_data",
+    "required_data_files": [
+      "train.csv",
+      "residual_sources/mlp_oof_predictions.csv.gz",
+      "router_sources/catboost/fold_2022.npz", "router_sources/catboost/fold_2023.npz", "router_sources/catboost/fold_2024.npz",
+      "router_sources/lightgbm/fold_2022.npz", "router_sources/lightgbm/fold_2023.npz", "router_sources/lightgbm/fold_2024.npz"
+    ],
+    "checkpoint_directory": "checkpoints/040_bounded_residual_dcn"
+  },
+  "network_volume_root_env": "LG_AIMERS_NETWORK_VOLUME_ROOT",
+  "safety": {"allow_full_training": true, "cuda_required": true, "local_full_training_forbidden": true}
+}
