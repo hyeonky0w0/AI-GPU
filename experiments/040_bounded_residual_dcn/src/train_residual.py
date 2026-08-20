@@ -1,6 +1,6 @@
 """Residual MLP/DCN의 temporal outer 평가와 gated final 학습."""
 from __future__ import annotations
-import argparse, gc, hashlib, json, os, platform, time
+import argparse, gc, hashlib, io, json, os, platform, time
 from pathlib import Path
 import joblib, numpy as np, pandas as pd, psutil, torch
 from torch.utils.data import DataLoader,TensorDataset
@@ -11,6 +11,8 @@ from inspect_assets import inspect
 from models import ResidualDCN,ResidualMLP,final_probability,make_preprocessor,numpy_probability
 
 def write_json(path,value): path.parent.mkdir(parents=True,exist_ok=True); tmp=path.with_suffix(path.suffix+".tmp"); tmp.write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding="utf-8"); os.replace(tmp,path)
+def write_torch(path,value):
+    path.parent.mkdir(parents=True,exist_ok=True); tmp=path.with_suffix(path.suffix+".tmp"); buffer=io.BytesIO(); torch.save(value,buffer); tmp.write_bytes(buffer.getvalue()); os.replace(tmp,path)
 def seed_all(seed): np.random.seed(seed); torch.manual_seed(seed); torch.cuda.manual_seed_all(seed) if torch.cuda.is_available() else None
 def row_digest(frame):
     h=hashlib.sha256()
@@ -30,19 +32,29 @@ def fit(train,pred,kind,seed,epochs,config,device,stage,ckpt,early=True):
     signature={"train_rows":len(train),"predict_rows":len(pred),"train_row_sha256":row_digest(train),"predict_row_sha256":row_digest(pred),"kind":kind,"seed":seed,"epochs":epochs,"learning_rate":config["learning_rate"],"weight_decay":config["weight_decay"],"train_lambda":config["train_lambda"]}
     if marker.is_file() and raw_path.is_file():
         m=json.loads(marker.read_text(encoding="utf-8")); raw=np.load(raw_path)
-        if m.get("signature")==signature and raw.shape==(len(pred),) and np.isfinite(raw).all(): return raw,m["best_epoch"]
-    target.mkdir(parents=True,exist_ok=True); pre=make_preprocessor(); x=pre.fit_transform(train[MODEL_FEATURES]).astype("float32"); xp=pre.transform(pred[MODEL_FEATURES]).astype("float32"); joblib.dump(pre,target/"preprocessor.joblib")
+        if m.get("signature")==signature and raw.shape==(len(pred),) and np.isfinite(raw).all(): print(f"[resume] 완료 stage 재사용: {stage}/{kind}/seed_{seed}",flush=True); return raw,m["best_epoch"]
+    if config.get("_evaluate_only"): raise FileNotFoundError(f"evaluate-only checkpoint 누락: {target}")
+    target.mkdir(parents=True,exist_ok=True); pre_path=target/"preprocessor.joblib"; pre_marker=target/"preprocessor.json"
+    if pre_path.is_file() and pre_marker.is_file() and json.loads(pre_marker.read_text(encoding="utf-8")).get("signature")==signature:
+        pre=joblib.load(pre_path); x=pre.transform(train[MODEL_FEATURES]).astype("float32"); xp=pre.transform(pred[MODEL_FEATURES]).astype("float32")
+    else:
+        pre=make_preprocessor(); x=pre.fit_transform(train[MODEL_FEATURES]).astype("float32"); xp=pre.transform(pred[MODEL_FEATURES]).astype("float32"); tmp=pre_path.with_suffix(".joblib.tmp"); joblib.dump(pre,tmp); os.replace(tmp,pre_path); write_json(pre_marker,{"signature":signature})
     seed_all(seed); cls=ResidualMLP if kind=="mlp" else ResidualDCN; model=cls(x.shape[1]).to(device)
     opt=torch.optim.AdamW(model.parameters(),lr=config["learning_rate"],weight_decay=config["weight_decay"])
     ds=TensorDataset(torch.from_numpy(x),torch.from_numpy(train.p_915.to_numpy("float32")),torch.from_numpy(train.target.to_numpy("float32")))
-    loader=DataLoader(ds,batch_size=config["batch_size"],shuffle=True,generator=torch.Generator().manual_seed(seed)); best=np.inf; wait=0; best_epoch=0
-    for epoch in range(1,epochs+1):
-        model.train(); total=0.0
+    generator=torch.Generator().manual_seed(seed); loader=DataLoader(ds,batch_size=config["batch_size"],shuffle=True,generator=generator,num_workers=int(config.get("_dataloader_workers",0))); best=np.inf; wait=0; best_epoch=0; start_epoch=1
+    epoch_files=sorted(target.glob("epoch_*.pt"),key=lambda p:int(p.stem.split("_")[-1]))
+    if epoch_files:
+        saved=torch.load(epoch_files[-1],map_location=device,weights_only=True)
+        if saved.get("signature")==signature:
+            model.load_state_dict(saved["model"]); opt.load_state_dict(saved["optimizer"]); generator.set_state(saved["generator_state"]); best=float(saved["best"]); wait=int(saved["wait"]); best_epoch=int(saved["best_epoch"]); start_epoch=int(saved["epoch"])+1; print(f"[resume] epoch {start_epoch-1} 이후 재개: {stage}/{kind}/seed_{seed}",flush=True)
+    stage_started=time.perf_counter()
+    for epoch in range(start_epoch,epochs+1):
+        epoch_started=time.perf_counter(); model.train(); total=0.0
         for xb,bb,yb in loader:
             xb,bb,yb=xb.to(device),bb.to(device),yb.to(device); opt.zero_grad(set_to_none=True); p=final_probability(bb,model(xb),config["train_lambda"]); loss=((p-yb)**2).mean()
             if not torch.isfinite(loss): raise FloatingPointError("비유한 loss")
             loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(),config["gradient_clip"]); opt.step(); total+=float(loss.detach())*len(xb)
-        torch.save({"model":model.state_dict(),"input_dim":x.shape[1],"epoch":epoch,"kind":kind},target/f"epoch_{epoch}.pt")
         if early:
             validation_raw=predict(model,xp,device,config["predict_batch_size"])
             validation_probability=numpy_probability(pred.p_915.to_numpy(),validation_raw,config["train_lambda"])[0]
@@ -52,6 +64,11 @@ def fit(train,pred,kind,seed,epochs,config,device,stage,ckpt,early=True):
         if score<best-1e-8: best=score; best_epoch=epoch; wait=0
         else: wait+=1
         if not early: best_epoch=epoch
+        write_torch(target/f"epoch_{epoch}.pt",{"model":model.state_dict(),"optimizer":opt.state_dict(),"generator_state":generator.get_state(),"input_dim":x.shape[1],"epoch":epoch,"kind":kind,"best":best,"wait":wait,"best_epoch":best_epoch,"signature":signature})
+        elapsed=time.perf_counter()-epoch_started; done=epoch-start_epoch+1; eta=elapsed*(epochs-epoch); rss=psutil.Process().memory_info().rss/2**20
+        print(f"[epoch] stage={stage} model={kind} seed={seed} epoch={epoch}/{epochs} score={score:.9f} seconds={elapsed:.1f} ETA={eta/3600:.2f}h RSS={rss:.1f}MiB",flush=True)
+        deadline=config.get("_deadline_monotonic")
+        if deadline and time.monotonic()>=deadline: raise TimeoutError(f"--max-hours 도달; epoch {epoch} checkpoint 저장 완료")
         if early and wait>=config["early_stopping_patience"]: break
     saved=torch.load(target/f"epoch_{best_epoch}.pt",map_location=device,weights_only=True); model.load_state_dict(saved["model"]); raw=predict(model,xp,device,config["predict_batch_size"]); np.save(raw_path,raw); write_json(marker,{"signature":signature,"best_epoch":best_epoch}); del x,xp,model; gc.collect(); return raw,best_epoch
 
@@ -104,9 +121,13 @@ def run_final(frame,test,prior,cfg,device,ckpt,out):
     return {"status":"completed","phase":"final_train","model":"dcn","lambda":lam,"seeds":seeds,"rows":len(submission),**residual_stats(raw)}
 
 def main():
-    p=argparse.ArgumentParser(); p.add_argument("--phase",choices=["seed42","three_seed","final_train"],default="seed42"); p.add_argument("--data-root",required=True); p.add_argument("--asset-root",required=True); p.add_argument("--output-dir",required=True); p.add_argument("--checkpoint-dir",required=True); p.add_argument("--mlp-oof-path"); p.add_argument("--smoke",action="store_true"); p.add_argument("--cpu-smoke",action="store_true"); a=p.parse_args()
-    cfg=load_json(root()/"configs/experiment.json"); device=torch.device("cpu" if a.cpu_smoke else "cuda")
-    if not a.cpu_smoke and not torch.cuda.is_available(): raise RuntimeError("full mode는 CUDA 필수")
+    p=argparse.ArgumentParser(); p.add_argument("--phase",choices=["seed42","three_seed","final_train"],default="seed42"); p.add_argument("--data-root",required=True); p.add_argument("--asset-root",required=True); p.add_argument("--output-dir",required=True); p.add_argument("--checkpoint-dir",required=True); p.add_argument("--mlp-oof-path"); p.add_argument("--smoke",action="store_true"); p.add_argument("--cpu-smoke",action="store_true"); p.add_argument("--local-cpu",action="store_true"); p.add_argument("--cpu-workers",type=int,default=1); p.add_argument("--dataloader-workers",type=int,default=0); p.add_argument("--max-hours",type=float); p.add_argument("--evaluate-only",action="store_true"); a=p.parse_args()
+    if a.cpu_workers<1 or a.dataloader_workers<0: raise ValueError("worker 수 계약 실패")
+    if a.local_cpu and a.phase!="seed42": raise PermissionError("로컬 CPU는 seed42/evaluate-only만 허용")
+    cfg=load_json(root()/"configs/experiment.json"); device=torch.device("cpu" if a.cpu_smoke or a.local_cpu else "cuda")
+    if not (a.cpu_smoke or a.local_cpu) and not torch.cuda.is_available(): raise RuntimeError("full mode는 CUDA 필수")
+    if a.local_cpu: torch.set_num_threads(a.cpu_workers); torch.set_num_interop_threads(1)
+    cfg["_dataloader_workers"]=a.dataloader_workers; cfg["_evaluate_only"]=a.evaluate_only; cfg["_deadline_monotonic"]=time.monotonic()+a.max_hours*3600 if a.max_hours else None
     assets=inspect(Path(a.asset_root),Path(a.data_root),Path(a.mlp_oof_path) if a.mlp_oof_path else None,a.phase=="final_train")
     frame=build_frame(Path(a.data_root),Path(a.asset_root),Path(a.mlp_oof_path) if a.mlp_oof_path else None); out=Path(a.output_dir); out.mkdir(parents=True,exist_ok=True); ckpt=Path(a.checkpoint_dir)/a.phase
     if a.smoke: frame=pd.concat([frame[frame.fold.eq(y)].head(cfg["smoke_rows_per_fold"]) for y in YEARS],ignore_index=True); cfg["epochs"]=2; cfg["bootstrap_repeats"]=20
@@ -125,4 +146,8 @@ def main():
     report={"status":"completed","decision":"CONDITIONAL" if extend else "REJECT","phase":a.phase,"seed42_extend":extend,"models":reports,"asset_audit":assets,"lambda_zero_max_error":float(max(np.max(np.abs(x.p_915-x["p_lambda_0.00"])) for x in predictions)),"runtime_seconds":time.time()-started,"peak_rss_mib":psutil.Process().memory_info().rss/2**20,"environment":{"python":platform.python_version(),"torch":torch.__version__,"device":str(device)}}
     if report["lambda_zero_max_error"]>2e-15: raise AssertionError("lambda=0 baseline 불일치")
     pd.concat(tables).to_csv(out/"metrics.csv",index=False); pd.concat(predictions).to_csv(out/"residual_oof_predictions.csv.gz",index=False,compression="gzip"); write_json(out/"report.json",report); write_json(ckpt/"report.json",report)
-if __name__=="__main__": main()
+if __name__=="__main__":
+    try: main()
+    except (KeyboardInterrupt,TimeoutError) as exc:
+        print(f"안전 중단: {type(exc).__name__}: {exc}. 동일 명령으로 재개하십시오.",flush=True)
+        raise SystemExit(130)
