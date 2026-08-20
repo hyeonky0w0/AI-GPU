@@ -32,11 +32,15 @@ def validate_reference(path:Path, sample:pd.DataFrame) -> dict:
     if list(model.feature_names_in_)!=FEATURES or model.n_features_in_!=47: raise ValueError("890 checkpoint 입력 계약 불일치")
     vote=model.named_steps["clf"]
     if len(vote.estimators_)!=30: raise ValueError("890 checkpoint member 수 불일치")
-    first=vote.estimators_[0].estimator
+    members=[member.estimator for member in vote.estimators_]
+    first=members[0]
     expected={"hidden_layer_sizes":(256,128),"activation":"relu","solver":"adam","alpha":1e-4,"batch_size":512,"learning_rate_init":1e-3,"random_state":42}
     if any(first.get_params()[k]!=v for k,v in expected.items()): raise ValueError("890 checkpoint 모델 파라미터 불일치")
+    if [member.random_state for member in members] != [seed for seed in SEEDS for _ in SNAPSHOTS]: raise ValueError("890 checkpoint seed/member 순서 불일치")
+    common={k:v for k,v in expected.items() if k!="random_state"}
+    if any(any(member.get_params()[k]!=v for k,v in common.items()) for member in members): raise ValueError("890 checkpoint member 파라미터 불일치")
     x=sample[FEATURES]; got=model.predict_proba(x)[:,1]; xt=model.named_steps["pre"].transform(x)
-    manual=np.mean([member.estimator.predict_proba(xt)[:,1] for member in vote.estimators_],axis=0)
+    manual=np.mean([member.predict_proba(xt)[:,1] for member in members],axis=0)
     error=float(np.max(np.abs(got-manual)))
     if error>1e-12 or not np.isfinite(got).all() or not ((got>=0)&(got<=1)).all(): raise ValueError("890 checkpoint inference 재현 실패")
     return {"rows":len(sample),"max_absolute_difference":error,"mean_absolute_difference":float(np.mean(np.abs(got-manual))),"correlation":float(np.corrcoef(got,manual)[0,1]) if len(got)>1 else 1.0}
@@ -45,6 +49,7 @@ def main() -> None:
     ap=argparse.ArgumentParser(); ap.add_argument("--data-root",required=True); ap.add_argument("--asset-root",required=True); ap.add_argument("--output-dir",required=True); ap.add_argument("--smoke",action="store_true"); args=ap.parse_args()
     root=Path(args.data_root); out=Path(args.output_dir); out.mkdir(parents=True,exist_ok=True)
     data=pd.read_csv(root/"train.csv",usecols=[ID,*FEATURES,TARGET],encoding="utf-8-sig",low_memory=False)
+    if len(FEATURES)!=47 or len(USED)!=37 or len(SEEDS)*len(SNAPSHOTS)!=30: raise ValueError("실제 890 상수 계약 위반")
     if data[ID].isna().any() or data[ID].duplicated().any(): raise ValueError("원본 row_id 결측/중복")
     if TARGET in FEATURES or ID in FEATURES or list(data[FEATURES].columns)!=FEATURES: raise ValueError("feature/target 계약 위반")
     reference=validate_reference(Path(args.asset_root)/"mlp_snap345.pkl",data.head(32))

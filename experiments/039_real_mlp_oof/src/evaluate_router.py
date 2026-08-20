@@ -53,7 +53,10 @@ def load_base(data,asset_root):
     for year in FOLDS:
         val=data[data.season.eq(year)].copy(); y=val[TARGET].to_numpy(); ids=val[ID].astype(str).to_numpy()
         cz=np.load(asset_root/f"router_sources/catboost/fold_{year}.npz",allow_pickle=True); lz=np.load(asset_root/f"router_sources/lightgbm/fold_{year}.npz",allow_pickle=True)
-        if not np.array_equal(cz["y_true"],y) or not np.array_equal(lz["y_true"],y) or not np.array_equal(lz["row_id"].astype(str),ids): raise ValueError(f"base OOF row/target 불일치: {year}")
+        if (not np.array_equal(cz["y_true"],y) or not np.array_equal(lz["y_true"],y)
+                or not np.array_equal(cz["row_id"].astype(str),ids)
+                or not np.array_equal(lz["row_id"].astype(str),ids)):
+            raise ValueError(f"base OOF row/target 불일치: {year}")
         f=val[[ID,TARGET,*CAT,*CTX]].copy().rename(columns={TARGET:"target"}); f["fold"]=year; f["p_lgb"]=lz["lightgbm_k10"]; f["p_cat"]=cz["seed_777"]; rows.append(f)
     return pd.concat(rows,ignore_index=True)
 
@@ -75,8 +78,13 @@ def main():
         if sha256(path)!=expected: raise ValueError(f"Router source SHA-256 불일치: {relative}")
     data=pd.read_csv(root/"train.csv",usecols=[ID,TARGET,*RAW_FEATURES],encoding="utf-8-sig",low_memory=False); base=load_base(data,assets)
     real=pd.read_csv(args.mlp_oof); light=pd.read_csv(assets/"router_sources/lightweight_oof_predictions.csv.gz")
+    expected=base.set_index(ID)[["fold","target"]].sort_index()
     for name,x,col in [("real",real,"p_mlp_real_890"),("light",light,"p_mlp")]:
         if x[ID].duplicated().any() or set(x[ID].astype(str))!=set(base[ID].astype(str)): raise ValueError(f"{name} OOF row_id 계약 실패")
+        aligned=x.assign(**{ID:x[ID].astype(str)}).set_index(ID).loc[expected.index]
+        if not np.array_equal(aligned["fold"].to_numpy(),expected["fold"].to_numpy()) or not np.array_equal(aligned["target"].to_numpy(),expected["target"].to_numpy()): raise ValueError(f"{name} OOF fold/target 계약 실패")
+        probability=aligned[col].to_numpy()
+        if not np.isfinite(probability).all() or not ((probability>=0)&(probability<=1)).all(): raise ValueError(f"{name} OOF 확률 계약 실패")
     indexed=base.set_index(ID); rp=real.set_index(ID).loc[indexed.index,"p_mlp_real_890"].to_numpy(); lp=light.set_index(ID).loc[indexed.index,"p_mlp"].to_numpy()
     real_frame=prep_frame(base,rp); light_frame=prep_frame(base,lp); rr=run_router(real_frame,"real_890"); lr=run_router(light_frame,"lightweight")
     joined=rr.merge(lr[[ID,"p_router_lightweight"]],on=ID,validate="one_to_one"); eval_real=real_frame.set_index(ID).loc[joined[ID]]; y=joined.target.to_numpy()
