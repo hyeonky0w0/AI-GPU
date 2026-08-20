@@ -17,6 +17,7 @@ EXPERIMENTS = {
     "gate_rolling": ROOT / "experiments" / "035_anchored_dynamic_moe",
     "gpu_mlp_smoke": ROOT / "experiments" / "036_gpu_tabular_mlp_smoke",
     "real_mlp_oof": ROOT / "experiments" / "039_real_mlp_oof",
+    "bounded_crossfit_residual_mlp": ROOT / "experiments" / "040_bounded_crossfit_residual_mlp",
 }
 MAX_BUNDLE_BYTES = 6 * 1024 * 1024
 
@@ -34,16 +35,22 @@ def main() -> None:
     experiment = EXPERIMENTS[mode]
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        add_file(archive, RUNTIME / "src" / "train.py", "src/train.py")
-        config_name = {"gpu_mlp_smoke":"experiment_036.json", "real_mlp_oof":"experiment_039.json"}.get(mode,"experiment.json")
+        worker = "train_040.py" if mode == "bounded_crossfit_residual_mlp" else "train.py"
+        add_file(archive, RUNTIME / "src" / worker, "src/train.py")
+        config_name = {"gpu_mlp_smoke":"experiment_036.json", "real_mlp_oof":"experiment_039.json", "bounded_crossfit_residual_mlp":"experiment_040.json"}.get(mode,"experiment.json")
         config = json.loads((RUNTIME / "config" / config_name).read_text(encoding="utf-8"))
         config["execution_mode"] = mode
+        if mode == "bounded_crossfit_residual_mlp":
+            phase = os.getenv("LG_AIMERS_EXPERIMENT_PHASE", "seed42")
+            if phase not in {"seed42", "three_seed", "final_train"}:
+                raise ValueError(f"지원하지 않는 040 phase: {phase}")
+            config["phase"] = phase
         archive.writestr("config/experiment.yaml", json.dumps(config, ensure_ascii=False, indent=2))
-        if mode in {"gpu_mlp_smoke", "real_mlp_oof"}:
+        if mode in {"gpu_mlp_smoke", "real_mlp_oof", "bounded_crossfit_residual_mlp"}:
             add_file(archive, experiment / "requirements.txt", "requirements.txt")
         for path in sorted(experiment.rglob("*")):
             if (path.is_file() and "__pycache__" not in path.parts and "outputs" not in path.parts
-                    and not (mode in {"gpu_mlp_smoke", "real_mlp_oof"} and path == experiment / "requirements.txt")):
+                    and not (mode in {"gpu_mlp_smoke", "real_mlp_oof", "bounded_crossfit_residual_mlp"} and path == experiment / "requirements.txt")):
                 archive.write(path, (Path("src") / "experiments" / experiment.name / path.relative_to(experiment)).as_posix())
 
     raw = buffer.getvalue()
