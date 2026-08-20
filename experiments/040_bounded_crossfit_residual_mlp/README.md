@@ -36,17 +36,92 @@
 확정되지 않아 `assets.json`에서 의도적으로 `null`이며, 따라서 `final_train`은 fail-closed된다. 정확한
 915 test asset을 확보한 뒤 SHA를 등록해야 한다. 데이터, OOF, checkpoint는 Git에 넣지 않는다.
 
-## 로컬 검증(학습 아님)
+## Windows 로컬 CPU 실행
+
+현재 확인된 로컬 환경은 Python `3.12.10`, `torch 2.13.0+cpu`, scikit-learn `1.8.0`이다.
+`requirements.txt`의 범위와 충돌하지 않으므로 torch를 재설치하지 않는다. 먼저 다음처럼 기존 가상환경을
+활성화한다.
 
 ```powershell
-.\.venv\Scripts\python.exe -m py_compile experiments/040_bounded_crossfit_residual_mlp/src/*.py
-.\.venv\Scripts\python.exe experiments/040_bounded_crossfit_residual_mlp/src/smoke_test.py
-.\.venv\Scripts\python.exe experiments/040_bounded_crossfit_residual_mlp/src/inspect_assets.py `
-  --data-root E:\LG_Aimers `
-  --asset-root E:\LG_Aimers_039_assets
+$Repo = "E:\LG_Aimers"
+$DataRoot = "E:\LG_Aimers"
+$AssetRoot = "E:\LG_Aimers_039_assets"
+$MlpOof = "$Repo\experiments\039_real_mlp_oof\outputs\local_full\mlp_oof_predictions.csv.gz"
+$Output = "$Repo\experiments\040_bounded_crossfit_residual_mlp\outputs\local_seed42"
+$Resume = "$Repo\experiments\040_bounded_crossfit_residual_mlp\outputs\local_checkpoints"
+$Python = "$Repo\.venv\Scripts\python.exe"
+$Runner = "$Repo\experiments\040_bounded_crossfit_residual_mlp\src\run_local_cpu.py"
+
+Set-Location $Repo
+& $Python -c "import torch, sklearn; print(torch.__version__, torch.cuda.is_available(), sklearn.__version__)"
 ```
 
-로컬에서 `train_residual.py` full mode를 실행하지 않는다. full mode는 CUDA가 없으면 즉시 실패한다.
+자산 검증:
+
+```powershell
+& $Python $Runner verify-assets `
+  --data-root $DataRoot `
+  --asset-root $AssetRoot `
+  --mlp-oof-path $MlpOof `
+  --output-dir $Output `
+  --cpu-workers 1
+```
+
+CPU smoke:
+
+```powershell
+& $Python $Runner smoke --cpu-workers 1
+```
+
+Seed 42 full rolling CPU 실행:
+
+```powershell
+& $Python $Runner seed42 `
+  --data-root $DataRoot `
+  --asset-root $AssetRoot `
+  --mlp-oof-path $MlpOof `
+  --output-dir $Output `
+  --checkpoint-dir $Resume `
+  --cpu-workers 1 `
+  --max-hours 18 `
+  --memory-reserve-gb 4
+```
+
+`--cpu-workers`는 PyTorch intra-op과 BLAS thread 수를 제한하며 DataLoader worker는 항상 0이다. 시작 전에
+dense transform의 보수적 peak RAM과 현재 available RAM을 계산한다. 예상 peak와 4 GiB 안전 여유를
+확보하지 못하면 학습 전에 실패한다. 현재 측정된 입력 차원 추정은 121, 모델용 peak 추정은 약 2.41 GiB다.
+따라서 기본 안전 여유를 포함해 최소 약 6.5 GiB available RAM을 권장한다. 메모리를 확보하지 못했다면
+브라우저 등을 종료한 뒤 같은 명령을 다시 실행한다. `--memory-reserve-gb`를 낮추는 것은 시스템 정지 위험을
+사용자가 명시적으로 감수할 때만 사용한다.
+
+각 epoch 뒤에 원자 checkpoint를 먼저 저장하고 RSS, 관측 peak RSS, epoch 시간, 전체 ETA를 출력한다.
+예상 총시간이 20시간 이상이면 경고한다. `--max-hours`에 도달하면 해당 epoch checkpoint 저장 후 종료 코드
+130으로 안전하게 끝난다. Ctrl+C는 한 번만 누르고 Python 종료를 기다린다. 진행 중 epoch는 다시 계산될 수
+있지만 마지막으로 완료·검증된 epoch/snapshot은 재사용한다. 재부팅이나 중단 뒤에는 위 seed42 명령을
+그대로 다시 실행하면 된다.
+
+학습 완료 후 평가만 다시 만드는 명령:
+
+```powershell
+& $Python $Runner evaluate `
+  --evaluation-phase seed42 `
+  --data-root $DataRoot `
+  --asset-root $AssetRoot `
+  --mlp-oof-path $MlpOof `
+  --output-dir $Output `
+  --checkpoint-dir $Resume `
+  --cpu-workers 1 `
+  --memory-reserve-gb 4
+```
+
+`three-seed`와 `final-train`도 같은 runner에 존재하지만 각각 seed42 gate와 정확한 915 test asset 계약을
+통과해야 한다. 현재 작업에서는 실행하지 않는다. 일반 `train_residual.py`와 RunPod 040 adapter는
+`--local-cpu`를 전달하지 않으므로 기존 CUDA 필수 검사가 유지된다.
+
+결과는 `$Output`의 `metrics_by_fold.csv`, `metrics_overall.csv`, `cap_analysis.csv`,
+`correction_analysis.csv`, `residual_oof_predictions.csv.gz`, `report.json`에 생성된다. 최종 판정은
+`report.json`의 `decision`과 `seed42_extend_three_seed`를 확인한다. checkpoint는 `$Resume\seed42` 아래의
+outer fold/inner/refit/seed/epoch 단위로 저장되며 `.tmp`나 완료 marker 없는 파일은 재사용하지 않는다.
 
 ## GitHub Actions / RunPod
 

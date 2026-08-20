@@ -9,12 +9,12 @@ import pandas as pd
 from contract import BASELINE_SHIFT, ID, MODEL_FEATURES, RAW_FEATURES, TARGET, YEARS, experiment_root, load_json, sigmoid_logit_shift
 
 
-def build_frame(data_root: Path, asset_root: Path) -> pd.DataFrame:
+def build_frame(data_root: Path, asset_root: Path, mlp_oof_path: Path | None = None) -> pd.DataFrame:
     assets = load_json(experiment_root() / "configs/assets.json")
     usecols = [ID, TARGET, "pitcher_id", *RAW_FEATURES]
     usecols = list(dict.fromkeys(usecols))
     train = pd.read_csv(data_root / "train.csv", usecols=usecols, low_memory=False)
-    mlp = pd.read_csv(asset_root / assets["sources"]["real_890_mlp_oof"])
+    mlp = pd.read_csv(mlp_oof_path or asset_root / assets["sources"]["real_890_mlp_oof"])
     parts = []
     for year in YEARS:
         val = train.loc[train["season"].eq(year)].reset_index(drop=True)

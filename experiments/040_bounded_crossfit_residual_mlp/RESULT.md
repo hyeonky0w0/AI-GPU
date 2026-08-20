@@ -25,3 +25,11 @@ Residual MLP는 anchor 모델을 업데이트하지 않으며 마지막 layer 0 
 ## 다음 판별 실험
 
 GitHub Actions에서 seed42 phase를 한 번 수동 실행하고 artifact의 deployable 지표만 판단한다.
+
+## 로컬 CPU 실행 추가
+
+Windows 전용 `src/run_local_cpu.py`를 추가했다. `--local-cpu`일 때만 CUDA 검사를 우회하고 CPU thread를
+명시적으로 제한한다. RunPod/GitHub Actions 경로는 계속 CUDA를 요구한다. 실제 로컬 경로의 SHA/행 정렬
+검증과 CPU 축소 smoke는 PASS다. 121 입력 차원을 기준으로 full transform/model peak를 약 2.41 GiB로
+보수적으로 추정하며, 기본 4 GiB reserve를 합쳐 약 6.5 GiB available RAM이 없으면 학습 전에 중단한다.
+seed42 full rolling은 실행하지 않았다.

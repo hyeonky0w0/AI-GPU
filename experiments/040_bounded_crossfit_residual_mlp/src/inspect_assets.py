@@ -11,7 +11,8 @@ import pandas as pd
 from contract import BASELINE_SHIFT, ID, TARGET, YEARS, experiment_root, load_json, sha256, sigmoid_logit_shift
 
 
-def inspect(asset_root: Path, data_root: Path, require_final: bool = False) -> dict:
+def inspect(asset_root: Path, data_root: Path, require_final: bool = False,
+            mlp_oof_path: Path | None = None) -> dict:
     contract = load_json(experiment_root() / "configs/assets.json")
     required = list(contract["sha256"])
     if require_final:
@@ -21,7 +22,12 @@ def inspect(asset_root: Path, data_root: Path, require_final: bool = False) -> d
         required.append(contract["sources"]["final_test_predictions"])
         if not (data_root / "test.csv").is_file():
             raise FileNotFoundError(f"final_train test.csv 누락: {data_root / 'test.csv'}")
-    missing = [str(asset_root / rel) for rel in required if not (asset_root / rel).is_file()]
+    mlp_relative = contract["sources"]["real_890_mlp_oof"]
+    resolved_mlp = mlp_oof_path or asset_root / mlp_relative
+    missing = [str(asset_root / rel) for rel in required
+               if rel != mlp_relative and not (asset_root / rel).is_file()]
+    if not resolved_mlp.is_file():
+        missing.append(str(resolved_mlp))
     if not (data_root / "train.csv").is_file():
         missing.append(str(data_root / "train.csv"))
     if missing:
@@ -29,10 +35,11 @@ def inspect(asset_root: Path, data_root: Path, require_final: bool = False) -> d
     checked = {}
     for rel in required:
         expected = contract["sha256"].get(rel) or contract["final_test_contract"].get("sha256")
-        actual = sha256(asset_root / rel)
+        path = resolved_mlp if rel == mlp_relative else asset_root / rel
+        actual = sha256(path)
         if actual != expected:
             raise ValueError(f"SHA256 불일치: {rel}\nexpected={expected}\nactual={actual}")
-        checked[rel] = {"sha256": actual, "bytes": (asset_root / rel).stat().st_size}
+        checked[rel] = {"path": str(path.resolve()), "sha256": actual, "bytes": path.stat().st_size}
     if require_final:
         final_predictions = pd.read_csv(asset_root / contract["sources"]["final_test_predictions"])
         expected = contract["final_test_contract"]["required_columns"]
@@ -40,7 +47,7 @@ def inspect(asset_root: Path, data_root: Path, require_final: bool = False) -> d
             raise ValueError(f"915 test prediction schema/row_id 계약 불일치: {list(final_predictions.columns)}")
 
     train = pd.read_csv(data_root / "train.csv", usecols=[ID, "season", TARGET], low_memory=False)
-    mlp_path = asset_root / contract["sources"]["real_890_mlp_oof"]
+    mlp_path = resolved_mlp
     mlp = pd.read_csv(mlp_path)
     expected_columns = [ID, "fold", "target", "p_mlp_real_890"]
     if list(mlp.columns) != expected_columns or len(mlp) != 746_504:
@@ -90,9 +97,11 @@ def main() -> None:
     parser.add_argument("--asset-root", required=True)
     parser.add_argument("--data-root", required=True)
     parser.add_argument("--output")
+    parser.add_argument("--mlp-oof-path")
     parser.add_argument("--require-final", action="store_true")
     args = parser.parse_args()
-    report = inspect(Path(args.asset_root), Path(args.data_root), args.require_final)
+    report = inspect(Path(args.asset_root), Path(args.data_root), args.require_final,
+                     Path(args.mlp_oof_path) if args.mlp_oof_path else None)
     rendered = json.dumps(report, ensure_ascii=False, indent=2)
     if args.output:
         Path(args.output).write_text(rendered, encoding="utf-8")

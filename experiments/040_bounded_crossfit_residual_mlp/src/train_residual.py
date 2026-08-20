@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import hashlib
 import io
 import json
@@ -18,7 +19,7 @@ import psutil
 from torch.utils.data import DataLoader, TensorDataset
 
 from build_dataset import build_frame, build_test_frame
-from contract import CAPS, ID, MODEL_FEATURES, SNAPSHOTS, atomic_write_bytes, experiment_root, load_json
+from contract import CAPS, ID, MODEL_FEATURES, NUMERIC, ONEHOT, PREDICTION_FEATURES, SNAPSHOTS, atomic_write_bytes, experiment_root, load_json, sha256
 from evaluate import evaluate
 from inspect_assets import inspect
 from model import ResidualMLP, final_probability, make_preprocessor, numpy_probability
@@ -47,6 +48,30 @@ def row_digest(frame: pd.DataFrame) -> str:
     return digest.hexdigest()
 
 
+def rss_mib(config: dict | None = None) -> float:
+    value=psutil.Process().memory_info().rss/1024/1024
+    if config is not None: config["_peak_rss_mib"]=max(float(config.get("_peak_rss_mib",0)),value)
+    return value
+
+
+def estimate_memory(frame: pd.DataFrame, config: dict, reserve_gib: float,
+                    enforce: bool = True) -> dict:
+    categories=sum(int(frame[c].nunique(dropna=True))+1 for c in ONEHOT)
+    input_dim=len(NUMERIC)*2+1+categories+len(PREDICTION_FEATURES)
+    largest_train=int(frame.fold.isin([2022,2023]).sum()); largest_predict=int(frame.fold.eq(2024).sum())
+    transformed=(largest_train+largest_predict)*input_dim*(8+4)
+    frame_bytes=int(frame.memory_usage(index=True,deep=True).sum())
+    estimated=int((transformed+frame_bytes)*1.35+512*1024*1024)
+    available=int(psutil.virtual_memory().available); reserve=int(reserve_gib*1024**3)
+    result={"estimated_input_dim":input_dim,"largest_train_rows":largest_train,"largest_predict_rows":largest_predict,
+            "frame_gib":frame_bytes/1024**3,"estimated_peak_gib":estimated/1024**3,
+            "available_gib":available/1024**3,"required_reserve_gib":reserve_gib}
+    print("메모리 사전 추정: "+json.dumps(result,ensure_ascii=False),flush=True)
+    if enforce and estimated+reserve>available:
+        raise MemoryError(f"안전 RAM 부족: 예상 peak={estimated/1024**3:.2f} GiB, 현재 available={available/1024**3:.2f} GiB, reserve={reserve_gib:.2f} GiB")
+    return result
+
+
 def predict_raw(model: ResidualMLP, values: np.ndarray, device: torch.device, batch_size: int) -> np.ndarray:
     model.eval(); chunks=[]
     with torch.no_grad():
@@ -62,6 +87,7 @@ def fit_snapshots(train: pd.DataFrame, predict: pd.DataFrame, seed: int, stage: 
     raw_path=completed.parent/"raw_prediction.npy"
     train_digest=row_digest(train); predict_digest=row_digest(predict)
     signature={key:config[key] for key in ["batch_size","learning_rate","weight_decay","epochs","train_cap"]}
+    signature.update({key:config.get(key) for key in ["_config_sha256","_input_asset_sha256"]})
     if completed.is_file() and raw_path.is_file():
         marker=json.loads(completed.read_text(encoding="utf-8"))
         saved=np.load(raw_path,allow_pickle=False)
@@ -69,11 +95,21 @@ def fit_snapshots(train: pd.DataFrame, predict: pd.DataFrame, seed: int, stage: 
                 and marker.get("train_row_id_sha256")==train_digest and marker.get("predict_row_id_sha256")==predict_digest
                 and marker.get("training_signature")==signature and saved.shape==(len(predict),) and np.isfinite(saved).all()):
             return saved
-    started=time.perf_counter(); set_seed(seed)
-    pre=make_preprocessor(); x_train=np.asarray(pre.fit_transform(train[MODEL_FEATURES]),dtype=np.float32)
+    started=time.perf_counter(); set_seed(seed); completed.parent.mkdir(parents=True,exist_ok=True)
+    preprocess_started=time.perf_counter(); pre_path=completed.parent/"preprocessor.joblib"; pre_marker_path=completed.parent/"preprocessor_complete.json"
+    pre=None; x_train=None
+    if pre_path.is_file() and pre_marker_path.is_file():
+        try:
+            pre_marker=json.loads(pre_marker_path.read_text(encoding="utf-8"))
+            if pre_marker.get("train_row_id_sha256")==train_digest and pre_marker.get("training_signature")==signature:
+                pre=joblib.load(pre_path)
+        except Exception as exc: print(f"손상 preprocessing checkpoint 무시: {type(exc).__name__}: {exc}",flush=True)
+    if pre is None:
+        pre=make_preprocessor(); x_train=np.asarray(pre.fit_transform(train[MODEL_FEATURES]),dtype=np.float32); atomic_joblib(pre_path,pre)
+        atomic_json(pre_marker_path,{"status":"complete","train_row_id_sha256":train_digest,"training_signature":signature})
+    if x_train is None: x_train=np.asarray(pre.transform(train[MODEL_FEATURES]),dtype=np.float32)
     x_predict=np.asarray(pre.transform(predict[MODEL_FEATURES]),dtype=np.float32)
-    completed.parent.mkdir(parents=True,exist_ok=True)
-    atomic_joblib(completed.parent/"preprocessor.joblib",pre)
+    print(f"{stage} seed={seed} preprocessing_seconds={time.perf_counter()-preprocess_started:.1f} input_dim={x_train.shape[1]} rss_mib={rss_mib(config):.1f}",flush=True)
     y=torch.as_tensor(train.target.to_numpy(np.float32)); base=torch.as_tensor(train.p_915.to_numpy(np.float32))
     dataset=TensorDataset(torch.from_numpy(x_train),y,base)
     generator=torch.Generator().manual_seed(seed)
@@ -93,6 +129,8 @@ def fit_snapshots(train: pd.DataFrame, predict: pd.DataFrame, seed: int, stage: 
                     or state.get("train_row_id_sha256")!=train_digest or state.get("predict_row_id_sha256")!=predict_digest
                     or state.get("training_signature")!=signature): continue
             model.load_state_dict(state["state_dict"]); optimizer.load_state_dict(state["optimizer"]); generator.set_state(state["generator_state"]); start_epoch=candidate_epoch+1
+            if "torch_rng_state" in state: torch.set_rng_state(state["torch_rng_state"].cpu())
+            if "numpy_rng_state" in state: np.random.set_state(state["numpy_rng_state"])
             for epoch in SNAPSHOTS:
                 snapshot_file=completed.parent/f"epoch_{epoch}.pt"
                 if epoch<=candidate_epoch and snapshot_file.is_file():
@@ -108,12 +146,22 @@ def fit_snapshots(train: pd.DataFrame, predict: pd.DataFrame, seed: int, stage: 
             raw=model(xb); p=final_probability(bb,raw,float(config["train_cap"])); loss=torch.mean((p-yb)**2)
             if not torch.isfinite(loss): raise FloatingPointError(f"NaN/inf loss: {stage} seed={seed} epoch={epoch}")
             loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(),1.0); optimizer.step(); total+=float(loss.detach())*len(xb)
-        rss=psutil.Process().memory_info().rss/1024/1024; gpu_peak=torch.cuda.max_memory_allocated()/1024/1024 if torch.cuda.is_available() else 0
-        print(f"{stage} seed={seed} epoch={epoch} brier={total/len(dataset):.9f} seconds={time.perf_counter()-epoch_started:.1f} rss_mib={rss:.1f} gpu_peak_mib={gpu_peak:.1f}",flush=True)
+        rss=rss_mib(config); gpu_peak=torch.cuda.max_memory_allocated()/1024/1024 if torch.cuda.is_available() else 0
+        config["_completed_epoch_units"]=int(config.get("_completed_epoch_units",0))+1
+        elapsed=time.monotonic()-float(config.get("_run_started_monotonic",time.monotonic()))
+        completed_units=max(int(config["_completed_epoch_units"]),1); total_units=max(int(config.get("_total_epoch_units",completed_units)),completed_units)
+        eta=elapsed/completed_units*(total_units-completed_units); projected=(elapsed+eta)/3600
+        print(f"{stage} seed={seed} epoch={epoch} brier={total/len(dataset):.9f} seconds={time.perf_counter()-epoch_started:.1f} rss_mib={rss:.1f} gpu_peak_mib={gpu_peak:.1f} eta_hours={eta/3600:.2f} projected_total_hours={projected:.2f} cpu_threads={torch.get_num_threads()}",flush=True)
+        if projected>=20: print("WARNING: 현재 속도 기준 전체 예상시간이 20시간 이상입니다.",flush=True)
         raw_pred=None
         if epoch in SNAPSHOTS:
             raw_pred=predict_raw(model,x_predict,device,int(config["batch_size"])); snapshot_predictions.append(raw_pred)
-        atomic_torch(completed.parent/f"epoch_{epoch}.pt",{"state_dict":model.state_dict(),"optimizer":optimizer.state_dict(),"generator_state":generator.get_state(),"input_dim":x_train.shape[1],"seed":seed,"epoch":epoch,"prediction":raw_pred,"train_row_id_sha256":train_digest,"predict_row_id_sha256":predict_digest,"training_signature":signature})
+        checkpoint_started=time.perf_counter()
+        atomic_torch(completed.parent/f"epoch_{epoch}.pt",{"state_dict":model.state_dict(),"optimizer":optimizer.state_dict(),"generator_state":generator.get_state(),"torch_rng_state":torch.get_rng_state(),"numpy_rng_state":np.random.get_state(),"input_dim":x_train.shape[1],"seed":seed,"epoch":epoch,"prediction":raw_pred,"train_row_id_sha256":train_digest,"predict_row_id_sha256":predict_digest,"training_signature":signature})
+        print(f"{stage} seed={seed} epoch={epoch} checkpoint_seconds={time.perf_counter()-checkpoint_started:.2f}",flush=True)
+        deadline=config.get("_deadline_monotonic")
+        if deadline is not None and time.monotonic()>=float(deadline):
+            raise TimeoutError(f"--max-hours 한도 도달: epoch {epoch} 원자 checkpoint 저장 후 안전 종료")
     if len(snapshot_predictions)!=len(SNAPSHOTS): raise RuntimeError(f"snapshot 3/4/5 완성 실패: {stage} seed={seed}")
     raw_mean=np.mean(snapshot_predictions,axis=0)
     temporary=raw_path.with_suffix(".npy.tmp")
@@ -143,6 +191,7 @@ def run_crossfit(frame: pd.DataFrame, seeds: list[int], output_dir: Path, checkp
                  device: torch.device, config: dict) -> dict:
     outputs=[]; selected={}; selection_records=[]; direction_agreement=[]
     for outer_year,train_years in [(2023,[2022]),(2024,[2022,2023])]:
+        fold_started=time.perf_counter()
         inner_train,inner_val=inner_frames(frame,outer_year)
         if set(inner_train[ID]) & set(inner_val[ID]): raise ValueError("inner train/validation row overlap")
         inner_raw=[]
@@ -150,6 +199,8 @@ def run_crossfit(frame: pd.DataFrame, seeds: list[int], output_dir: Path, checkp
             inner_raw.append(fit_snapshots(inner_train,inner_val,seed,f"outer_{outer_year}_inner",checkpoint_dir,device,config))
         cap,records=choose_cap(inner_val,np.mean(inner_raw,axis=0)); selected[outer_year]=cap
         for rec in records: selection_records.append({"outer_fold":outer_year,"selection_train_rows":len(inner_train),"selection_validation_rows":len(inner_val),**rec})
+        del inner_raw
+        gc.collect()
         outer_train=frame.loc[frame.fold.isin(train_years)].copy(); outer_eval=frame.loc[frame.fold.eq(outer_year)].copy()
         if set(outer_train[ID]) & set(outer_eval[ID]): raise ValueError("outer train/evaluation row overlap")
         raw=[]
@@ -157,7 +208,11 @@ def run_crossfit(frame: pd.DataFrame, seeds: list[int], output_dir: Path, checkp
             raw.append(fit_snapshots(outer_train,outer_eval,seed,f"outer_{outer_year}_refit",checkpoint_dir,device,config))
         if len(raw)>1:
             signs=np.sign(np.stack(raw)); direction_agreement.append(float(np.mean(np.all(signs==signs[0],axis=0))))
-        outer_eval["raw_correction"]=np.mean(raw,axis=0); outputs.append(outer_eval)
+        outer_eval["raw_correction"]=np.mean(raw,axis=0)
+        outputs.append(outer_eval[[ID,"fold","target","p_915","asof_pitcher_n","game_type","raw_correction"]].copy())
+        del inner_train,inner_val,outer_train,outer_eval,raw
+        gc.collect()
+        print(f"outer_fold={outer_year} total_seconds={time.perf_counter()-fold_started:.1f} rss_mib={rss_mib(config):.1f}",flush=True)
     pd.DataFrame(selection_records).to_csv(output_dir/"cap_selection_history.csv",index=False)
     result=evaluate(pd.concat(outputs,ignore_index=True),selected,output_dir)
     fold_metrics=pd.read_csv(output_dir/"metrics_by_fold.csv"); overall_metrics=pd.read_csv(output_dir/"metrics_overall.csv")
@@ -170,6 +225,41 @@ def run_crossfit(frame: pd.DataFrame, seeds: list[int], output_dir: Path, checkp
         result["three_seed_keep_candidate"]=keep; result["decision"]="CONDITIONAL" if keep else "REJECT"
     result["seeds"]=seeds; result["cuda"]={"available":torch.cuda.is_available(),"device":str(device),"name":torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,"torch":torch.__version__,"peak_allocated_bytes":torch.cuda.max_memory_allocated() if torch.cuda.is_available() else 0,"peak_reserved_bytes":torch.cuda.max_memory_reserved() if torch.cuda.is_available() else 0}
     atomic_json(output_dir/"report.json",result); return result
+
+
+def load_completed_prediction(checkpoint_dir: Path, stage: str, seed: int,
+                              predict: pd.DataFrame, config: dict) -> np.ndarray:
+    root=checkpoint_dir/stage/f"seed_{seed}"; marker_path=root/"complete.json"; raw_path=root/"raw_prediction.npy"
+    if not marker_path.is_file() or not raw_path.is_file():
+        raise FileNotFoundError(f"evaluate에 필요한 완료 checkpoint 누락: {root}")
+    marker=json.loads(marker_path.read_text(encoding="utf-8")); raw=np.load(raw_path,allow_pickle=False)
+    signature=marker.get("training_signature",{})
+    if (marker.get("status")!="complete" or marker.get("predict_row_id_sha256")!=row_digest(predict)
+            or signature.get("_config_sha256")!=config.get("_config_sha256")
+            or signature.get("_input_asset_sha256")!=config.get("_input_asset_sha256")
+            or raw.shape!=(len(predict),) or not np.isfinite(raw).all()):
+        raise ValueError(f"evaluate checkpoint 계약 불일치: {root}")
+    return raw
+
+
+def run_evaluate_only(frame: pd.DataFrame, seeds: list[int], output_dir: Path,
+                      checkpoint_dir: Path, config: dict) -> dict:
+    outputs=[]; selected={}; selection=[]
+    for outer_year,train_years in [(2023,[2022]),(2024,[2022,2023])]:
+        inner_train,inner_val=inner_frames(frame,outer_year)
+        inner_raw=[load_completed_prediction(checkpoint_dir,f"outer_{outer_year}_inner",seed,inner_val,config) for seed in seeds]
+        cap,records=choose_cap(inner_val,np.mean(inner_raw,axis=0)); selected[outer_year]=cap
+        for record in records: selection.append({"outer_fold":outer_year,"selection_train_rows":len(inner_train),"selection_validation_rows":len(inner_val),**record})
+        outer_eval=frame.loc[frame.fold.eq(outer_year)].copy()
+        raw=[load_completed_prediction(checkpoint_dir,f"outer_{outer_year}_refit",seed,outer_eval,config) for seed in seeds]
+        outer_eval["raw_correction"]=np.mean(raw,axis=0)
+        outputs.append(outer_eval[[ID,"fold","target","p_915","asof_pitcher_n","game_type","raw_correction"]].copy())
+    pd.DataFrame(selection).to_csv(output_dir/"cap_selection_history.csv",index=False)
+    result=evaluate(pd.concat(outputs,ignore_index=True),selected,output_dir)
+    result["seeds"]=seeds; result["evaluation_resumed_from_completed_checkpoints"]=True
+    atomic_json(output_dir/"report.json",result)
+    atomic_json(checkpoint_dir/"evaluation_complete.json",{"status":"complete","config_sha256":config.get("_config_sha256"),"input_asset_sha256":config.get("_input_asset_sha256"),"selected_caps":result["selected_caps"],"report":str((output_dir/'report.json').resolve())})
+    return result
 
 
 def run_final(frame: pd.DataFrame, test: pd.DataFrame, seeds: list[int], cap: float,
@@ -188,37 +278,65 @@ def run_final(frame: pd.DataFrame, test: pd.DataFrame, seeds: list[int], cap: fl
 
 def main() -> None:
     parser=argparse.ArgumentParser(); parser.add_argument("--phase",choices=["seed42","three_seed","final_train"],required=True)
-    parser.add_argument("--data-root",required=True); parser.add_argument("--asset-root",required=True); parser.add_argument("--output-dir",required=True); parser.add_argument("--checkpoint-dir",required=True)
-    parser.add_argument("--smoke",action="store_true"); args=parser.parse_args()
+    parser.add_argument("--data-root",required=True); parser.add_argument("--asset-root",required=True); parser.add_argument("--mlp-oof-path"); parser.add_argument("--output-dir",required=True); parser.add_argument("--checkpoint-dir",required=True)
+    parser.add_argument("--smoke",action="store_true"); parser.add_argument("--local-cpu",action="store_true")
+    parser.add_argument("--cpu-workers",type=int,default=1); parser.add_argument("--max-hours",type=float); parser.add_argument("--memory-reserve-gb",type=float,default=4.0); parser.add_argument("--evaluate-only",action="store_true"); args=parser.parse_args()
+    if args.cpu_workers<1: raise ValueError("--cpu-workers는 1 이상이어야 합니다")
+    if args.max_hours is not None and args.max_hours<=0: raise ValueError("--max-hours는 0보다 커야 합니다")
     output=Path(args.output_dir); checkpoints=Path(args.checkpoint_dir); output.mkdir(parents=True,exist_ok=True); checkpoints.mkdir(parents=True,exist_ok=True)
-    config=load_json(experiment_root()/"configs/experiment.json")
-    if not args.smoke and not torch.cuda.is_available(): raise RuntimeError("040 full mode는 CUDA GPU가 필수입니다")
-    device=torch.device("cpu" if args.smoke else "cuda")
-    inspect(Path(args.asset_root),Path(args.data_root),require_final=args.phase=="final_train")
+    config_path=experiment_root()/"configs/experiment.json"; config=load_json(config_path)
+    if not args.smoke and not args.local_cpu and not torch.cuda.is_available(): raise RuntimeError("040 GPU full mode는 CUDA GPU가 필수입니다")
+    device=torch.device("cpu" if args.smoke or args.local_cpu else "cuda")
+    if args.local_cpu:
+        torch.set_num_threads(args.cpu_workers)
+        try: torch.set_num_interop_threads(1)
+        except RuntimeError: pass
+    mlp_path=Path(args.mlp_oof_path) if args.mlp_oof_path else None
+    asset_report=inspect(Path(args.asset_root),Path(args.data_root),require_final=args.phase=="final_train",mlp_oof_path=mlp_path)
+    config["_config_sha256"]=sha256(config_path)
+    config["_input_asset_sha256"]=hashlib.sha256(json.dumps({k:v["sha256"] for k,v in asset_report["checked_assets"].items()},sort_keys=True).encode()).hexdigest()
+    config["_run_started_monotonic"]=time.monotonic(); config["_deadline_monotonic"]=(time.monotonic()+args.max_hours*3600) if args.max_hours else None
+    config["_completed_epoch_units"]=0; config["_peak_rss_mib"]=rss_mib()
     if args.phase=="final_train":
         validation=checkpoints/"three_seed"/"report.json"
         if not validation.is_file(): validation=checkpoints/"seed42"/"report.json"
         if not validation.is_file(): raise PermissionError("final_train 차단: 검증 통과 report가 없습니다")
         prior=json.loads(validation.read_text(encoding="utf-8"))
         if prior.get("decision") not in {"CONDITIONAL","ACCEPT"}: raise PermissionError("final_train 차단: 검증 판정이 통과가 아닙니다")
-        frame=build_frame(Path(args.data_root),Path(args.asset_root)); test=build_test_frame(Path(args.data_root),Path(args.asset_root)); cap=float(prior["selected_caps"]["2024"])
-        seeds=prior.get("seeds",[42]); report=run_final(frame,test,seeds,cap,output,checkpoints/args.phase,device,config); atomic_json(output/"report.json",report); atomic_json(checkpoints/args.phase/"report.json",report); return
+        frame=build_frame(Path(args.data_root),Path(args.asset_root),mlp_path); test=build_test_frame(Path(args.data_root),Path(args.asset_root)); cap=float(prior["selected_caps"]["2024"])
+        seeds=prior.get("seeds",[42]); config["_total_epoch_units"]=len(seeds)*int(config["epochs"]); memory_estimate=estimate_memory(frame,config,args.memory_reserve_gb,enforce=args.local_cpu)
+        report=run_final(frame,test,seeds,cap,output,checkpoints/args.phase,device,config); report["memory_estimate"]=memory_estimate; report["runtime"]={"device":str(device),"cpu_threads":torch.get_num_threads(),"peak_rss_mib":config["_peak_rss_mib"]}; atomic_json(output/"report.json",report); atomic_json(checkpoints/args.phase/"report.json",report); return
     prior_seed42=None
     if args.phase=="three_seed":
         prior=checkpoints/"seed42"/"report.json"
         if not prior.is_file() or not json.loads(prior.read_text(encoding="utf-8")).get("seed42_extend_three_seed"):
             raise PermissionError("three_seed 차단: seed42 통과 marker가 없습니다")
         prior_seed42=json.loads(prior.read_text(encoding="utf-8"))
-    frame=build_frame(Path(args.data_root),Path(args.asset_root))
+    frame=build_frame(Path(args.data_root),Path(args.asset_root),mlp_path)
     if args.smoke: frame=pd.concat([frame.loc[frame.fold.eq(y)].head(1024) for y in [2022,2023,2024]],ignore_index=True)
     seeds=config["seeds"][args.phase]
+    config["_total_epoch_units"]=len(seeds)*4*int(config["epochs"])
+    memory_estimate=estimate_memory(frame,config,args.memory_reserve_gb,enforce=args.local_cpu)
+    if args.evaluate_only:
+        report=run_evaluate_only(frame,seeds,output,checkpoints/args.phase,config); report["memory_estimate"]=memory_estimate; atomic_json(output/"report.json",report); return
     report=run_crossfit(frame,seeds,output,checkpoints/args.phase,device,config)
     if args.phase=="three_seed" and prior_seed42 is not None:
         current=np.asarray(list(report["deployable_fold_deltas"].values())); previous=np.asarray(list(prior_seed42["deployable_fold_deltas"].values()))
         stable=bool(np.std(current)<=np.std(previous)+1e-12); report["more_stable_than_seed42"]=stable
         report["three_seed_keep_candidate"]=bool(report.get("three_seed_keep_candidate") and stable); report["decision"]="CONDITIONAL" if report["three_seed_keep_candidate"] else "REJECT"
-    report["runtime"]={"python":platform.python_version(),"platform":platform.platform(),"seconds":None}
+    report["runtime"]={"python":platform.python_version(),"platform":platform.platform(),"device":str(device),"cpu_threads":torch.get_num_threads(),"peak_rss_mib":config["_peak_rss_mib"]}
+    report["memory_estimate"]=memory_estimate
     atomic_json(output/"report.json",report); atomic_json(checkpoints/args.phase/"report.json",report)
+    atomic_json(checkpoints/args.phase/"evaluation_complete.json",{"status":"complete","config_sha256":config.get("_config_sha256"),"input_asset_sha256":config.get("_input_asset_sha256"),"selected_caps":report.get("selected_caps"),"report":str((output/'report.json').resolve())})
 
 
-if __name__=="__main__": main()
+if __name__=="__main__":
+    try:
+        main()
+    except (KeyboardInterrupt,TimeoutError) as exc:
+        payload={"status":"interrupted","reason":type(exc).__name__,"message":str(exc),"safe_resume":True,"timestamp":time.strftime("%Y-%m-%d %H:%M:%S")}
+        for option in ["--output-dir","--checkpoint-dir"]:
+            if option in os.sys.argv:
+                root=Path(os.sys.argv[os.sys.argv.index(option)+1]); root.mkdir(parents=True,exist_ok=True); atomic_json(root/"INTERRUPTED.json",payload)
+        print(f"안전 중단: {type(exc).__name__}: {exc}. 같은 명령으로 resume하십시오.",flush=True)
+        raise SystemExit(130)
