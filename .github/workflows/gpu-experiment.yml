@@ -1,9 +1,6 @@
 name: LG Aimers GPU Experiment
 
 on:
-  push:
-    branches:
-      - "**"
   workflow_dispatch:
     inputs:
       execution_mode:
